@@ -36,8 +36,10 @@ Python 3.8+ · tkinter/ttk · [tksheet](https://github.com/ragardner/tksheet) ·
 build.bat
 ```
 
-Получится `Excel Search.exe` (~41 МБ, onefile) — запускается двойным кликом, Python не нужен.
-Для сборки нужны `pyinstaller` и `pillow`.
+Результат — `Excel Search.zip` с `Excel Search.exe` (~41 МБ, onefile), запуск двойным кликом,
+Python не нужен. Для сборки нужны `pyinstaller` и `pillow`. Exe пакуется в zip, потому что
+антивирус на сетевом хранилище удаляет голый PyInstaller-бинарь; `deploy.bat` распаковывает его
+в рабочую папку на локальном диске.
 
 ### Из исходника
 

@@ -15,5 +15,7 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed ^
     --name "Excel Search" --icon icon.ico --add-data "icon.ico;." excel_search.py
 popd
 
-copy /Y "%B%\dist\Excel Search.exe" "%SRC%" >nul && echo [OK] Excel Search.exe rebuilt
+rem Bare PyInstaller exe gets deleted by AV on the network share, so ship a zip.
+if exist "%SRC%Excel Search.zip" del "%SRC%Excel Search.zip"
+tar -a -c -f "%SRC%Excel Search.zip" -C "%B%\dist" "Excel Search.exe" && echo [OK] Excel Search.zip rebuilt
 pause

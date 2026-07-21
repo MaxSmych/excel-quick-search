@@ -10,6 +10,7 @@ __pycache__/
 
 # сборка PyInstaller (бинарь тяжёлый, собирается из исходника)
 *.exe
+*.zip
 build/
 dist/
 *.spec
