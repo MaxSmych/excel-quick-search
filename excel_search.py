@@ -14,8 +14,16 @@ import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "excel_search_settings.json")
-DEFAULT_EXCEL  = os.path.join(os.path.dirname(__file__), "维修日报数据.xlsx")
+# Base dir for persistent files (settings, default excel): next to the EXE when frozen,
+# next to the script otherwise. NOT sys._MEIPASS — that is a throwaway temp dir per run,
+# which is why settings/checkmarks weren't kept in the built exe.
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
+DEFAULT_EXCEL  = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
 
 def _resource(name):
