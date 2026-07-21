@@ -16,7 +16,10 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 | Файл | Назначение |
 |------|-----------|
 | `excel_search.py` | Основной и единственный скрипт (класс `App(tk.Tk)`). |
-| `Открыть поиск.bat` | Launcher: `chcp 65001` + `pythonw.exe %~dp0excel_search.py`. Запускает `C:\Python314\pythonw.exe`. |
+| `Excel Search.exe` | Собранный onefile-бинарь (PyInstaller, ~41 МБ) со своей иконкой. Не требует Python. В git-репо не включён. |
+| `icon.ico` / `icon.png` | Индивидуальная иконка (Catppuccin: лупа над строками таблицы). `.ico` вшивается в exe и в окно (`iconbitmap`), `.png` — превью. |
+| `build.bat` | Пересборка exe из исходника. Собирает в `%TEMP%` (сетевые диски ломают PyInstaller), копирует exe обратно в папку. |
+| `Открыть поиск.bat` | Launcher из исходника: `chcp 65001` + `pythonw.exe %~dp0excel_search.py`. Запускает `C:\Python314\pythonw.exe`. |
 | `excel_search_settings.json` | Конфиг, генерируется/пишется автоматически. Не редактировать руками без нужды. |
 | `README.txt` | Пользовательская инструкция. |
 | `deploy.bat` | Локальный деплой на боевую машину (cp866). Копирует файлы приложения в `C:\Users\max_k\Desktop\ASC\Запчасти\MultiLauncher\Быстрый поиск в Excel`. `excel_search_settings.json` НЕ трогает. В git-репо не включён (жёсткий путь). |
@@ -26,7 +29,11 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 | `__pycache__/` | Байткод-кэш, генерируется автоматически, передавать не нужно. |
 
 ## Как запускается
-- Двойной клик по `Открыть поиск.bat`, либо `python excel_search.py`.
+- **Собранный:** двойной клик по `Excel Search.exe` (Python не нужен, иконка своя).
+- **Из исходника:** двойной клик по `Открыть поиск.bat`, либо `python excel_search.py`.
+- **Пересборка exe:** `build.bat` (нужны `pyinstaller` + `pillow` в `C:\Python314`).
+  Иконка окна ищется через `_resource("icon.ico")` — работает и из исходника, и из onefile
+  (`sys._MEIPASS`); в exe вшивается через `--add-data "icon.ico;."`.
 - Зависимости ставятся автоматически при первом запуске функцией `_ensure()`
   (`pip install pandas openpyxl tksheet` — нужен интернет). `pyxlsb` в `_ensure` **не** входит —
   ставится/нужен вручную, если открывают `.xlsb`.

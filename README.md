@@ -28,6 +28,19 @@ Python 3.8+ · tkinter/ttk · [tksheet](https://github.com/ragardner/tksheet) ·
 
 ## Установка и запуск
 
+### Готовый exe (Windows, без Python)
+
+Собрать одним файлом со своей иконкой:
+
+```bat
+build.bat
+```
+
+Получится `Excel Search.exe` (~41 МБ, onefile) — запускается двойным кликом, Python не нужен.
+Для сборки нужны `pyinstaller` и `pillow`.
+
+### Из исходника
+
 Нужен Python 3.8+ с `pip` (при установке — галочка **Add Python to PATH**).
 
 ```bash

@@ -8,6 +8,12 @@ deploy.bat
 __pycache__/
 *.pyc
 
+# сборка PyInstaller (бинарь тяжёлый, собирается из исходника)
+*.exe
+build/
+dist/
+*.spec
+
 # архивы и старые копии
 *.rar
 excel_search_backup.py

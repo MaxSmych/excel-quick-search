@@ -17,6 +17,12 @@ from tkinter import ttk, filedialog, messagebox
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "excel_search_settings.json")
 DEFAULT_EXCEL  = os.path.join(os.path.dirname(__file__), "维修日报数据.xlsx")
 
+
+def _resource(name):
+    # works both from source and from a PyInstaller onefile bundle
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, name)
+
 # ── auto-install dependencies ────────────────────────────────────────────────
 def _ensure(*packages):
     for pkg in packages:
@@ -94,6 +100,10 @@ class App(tk.Tk):
         self.title("Excel Search — SSC UZ")
         self.geometry("1280x720")
         self.minsize(800, 500)
+        try:
+            self.iconbitmap(_resource("icon.ico"))
+        except Exception:
+            pass
 
         self.settings   = load_settings()
         self.df          = None
