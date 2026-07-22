@@ -205,7 +205,7 @@ class App(tk.Tk):
         ttk.Checkbutton(bar, text="Регистр", variable=self.case_var,
                         command=self._on_search).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="✕ Очистить", command=self._clear_search).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Экспорт CSV", command=self._export_csv).pack(side=tk.RIGHT)
+        ttk.Button(bar, text="Экспорт", command=self._export_csv).pack(side=tk.RIGHT)
 
         # paned window
         pane = tk.PanedWindow(self, orient=tk.HORIZONTAL, bg=C["base"],
@@ -583,11 +583,18 @@ class App(tk.Tk):
                     fq, case=case, na=False, regex=False)
         result = df.loc[mask, cols]
         path = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv"), ("All", "*.*")])
-        if path:
-            result.to_csv(path, index=False, encoding="utf-8-sig")
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv"), ("All", "*.*")])
+        if not path:
+            return
+        try:
+            if path.lower().endswith(".csv"):
+                result.to_csv(path, index=False, encoding="utf-8-sig")
+            else:
+                result.to_excel(path, index=False)
             messagebox.showinfo("Экспорт", f"Сохранено {len(result)} строк\n{path}")
+        except Exception as exc:
+            messagebox.showerror("Экспорт", f"Ошибка: {exc}")
 
     # ── close ─────────────────────────────────────────────────────────────────
     def destroy(self):
