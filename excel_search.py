@@ -160,7 +160,10 @@ class App(tk.Tk):
 
         ttk.Label(top, text="Файл:").pack(side=tk.LEFT)
         self.file_var = tk.StringVar()
-        ttk.Entry(top, textvariable=self.file_var, width=55).pack(side=tk.LEFT, padx=4)
+        self.file_cb = ttk.Combobox(top, textvariable=self.file_var, width=55,
+                                    values=self.settings.get("recent_files", []))
+        self.file_cb.pack(side=tk.LEFT, padx=4)
+        self.file_cb.bind("<<ComboboxSelected>>", lambda e: self._on_recent_pick())
         ttk.Button(top, text="Обзор",    command=self._browse).pack(side=tk.LEFT)
         ttk.Button(top, text="Загрузить",command=self._on_load).pack(side=tk.LEFT, padx=4)
         ttk.Button(top, text="↺ Обновить",command=self._on_refresh).pack(side=tk.LEFT)
@@ -367,6 +370,19 @@ class App(tk.Tk):
             return
         self._set_checked(key, bool(event.value))
 
+    # ── recent files (quick switch in one window) ─────────────────────────────
+    def _add_recent(self, path):
+        lst = [p for p in self.settings.get("recent_files", []) if p != path]
+        lst.insert(0, path)
+        self.settings["recent_files"] = lst[:15]
+        save_settings(self.settings)
+        self.file_cb["values"] = self.settings["recent_files"]
+
+    def _on_recent_pick(self):
+        path = self.file_var.get().strip()
+        if path:
+            self._load_file(path)
+
     # ── file loading ─────────────────────────────────────────────────────────
     def _browse(self):
         path = filedialog.askopenfilename(
@@ -400,7 +416,7 @@ class App(tk.Tk):
             self.current_file = path
             self._last_mtime  = os.path.getmtime(path)
             self.settings["last_file"] = path
-            save_settings(self.settings)
+            self._add_recent(path)
             self._load_sheet(xl)
         except Exception as exc:
             self.status_var.set(f"Ошибка: {exc}")
