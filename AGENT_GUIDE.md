@@ -16,7 +16,7 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 | Файл | Назначение |
 |------|-----------|
 | `excel_search.py` | Основной и единственный скрипт (класс `App(tk.Tk)`). |
-| `Excel Search.zip` | Собранный onefile-бинарь `Excel Search.exe` (PyInstaller, ~41 МБ, своя иконка), упакованный в zip. Голый exe на сетевой шаре Z: удаляет антивирус (см. грабли), поэтому хранится/переносится как zip. Не требует Python. В git-репо не включён. |
+| `Excel Search.zip` | Собранное приложение (PyInstaller **onedir**: `Excel Search.exe` + папка `_internal`, своя иконка), запаковано zip'ом (внутри — СОДЕРЖИМОЕ папки приложения, распаковывается прямо в целевую папку). onedir = быстрый старт ~1.5 сек (onefile был ~10 сек: распаковка при каждом запуске). Голый exe на шаре Z: удаляет антивирус — потому zip. Не требует Python. В git-репо не включён. |
 | `icon.ico` / `icon.png` | Индивидуальная иконка (Catppuccin: лупа над строками таблицы). `.ico` вшивается в exe и в окно (`iconbitmap`), `.png` — превью. |
 | `build.bat` | Пересборка exe из исходника. Собирает в `%TEMP%` (сетевые диски ломают PyInstaller), копирует exe обратно в папку. |
 | `Открыть поиск.bat` | Launcher из исходника: `chcp 65001` + `pythonw.exe %~dp0excel_search.py`. Запускает `C:\Python314\pythonw.exe`. |
@@ -32,8 +32,10 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 - **Собранный:** `deploy.bat` распаковывает `Excel Search.zip` в целевую папку на локальном
   диске → там появляется `Excel Search.exe` (Python не нужен, иконка своя). Запуск двойным кликом.
 - **Из исходника:** двойной клик по `Открыть поиск.bat`, либо `python excel_search.py`.
-- **Пересборка exe:** `build.bat` (нужны `pyinstaller` + `pillow` в `C:\Python314`). Собирает в
-  `%TEMP%`, пакует результат в `Excel Search.zip` рядом (голый exe не кладём — его убивает AV на Z:).
+- **Пересборка exe:** `build.bat` (нужны `pyinstaller` + `pillow` в `C:\Python314`). Собирает
+  **onedir** в `%TEMP%`, пакует СОДЕРЖИМОЕ папки приложения (exe + `_internal`) в `Excel Search.zip`
+  рядом. `deploy.bat` распаковывает его в целевую папку → exe и `_internal` ложатся рядом с
+  `excel_search_settings.json` (общий с `.bat`-версией; `APP_DIR` = папка exe, не `_internal`).
   Иконка окна ищется через `_resource("icon.ico")` — работает и из исходника, и из onefile
   (`sys._MEIPASS`); в exe вшивается через `--add-data "icon.ico;."`.
 - Зависимости ставятся автоматически при первом запуске функцией `_ensure()`

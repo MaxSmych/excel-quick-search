@@ -40,10 +40,12 @@ Python 3.8+ · tkinter/ttk · [tksheet](https://github.com/ragardner/tksheet) ·
 build.bat
 ```
 
-Результат — `Excel Search.zip` с `Excel Search.exe` (~41 МБ, onefile), запуск двойным кликом,
-Python не нужен. Для сборки нужны `pyinstaller` и `pillow`. Exe пакуется в zip, потому что
-антивирус на сетевом хранилище удаляет голый PyInstaller-бинарь; `deploy.bat` распаковывает его
-в рабочую папку на локальном диске.
+Результат — `Excel Search.zip` с приложением (PyInstaller onedir: `Excel Search.exe` + папка
+`_internal`), запуск двойным кликом по exe, Python не нужен. Режим onedir даёт быстрый старт
+(~1.5 сек против ~10 сек у onefile, где бандл распаковывается при каждом запуске). Для сборки
+нужны `pyinstaller` и `pillow`. Приложение пакуется в zip, потому что антивирус на сетевом
+хранилище удаляет голый PyInstaller-бинарь; `deploy.bat` распаковывает его в рабочую папку на
+локальном диске.
 
 ### Из исходника
 
