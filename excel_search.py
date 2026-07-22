@@ -117,6 +117,9 @@ class App(tk.Tk):
         self.df          = None
         self._keys       = None   # pd.Series: df.index -> stable row hash
         self._display_keys = []   # row hash per displayed table row
+        self._display_cols = []   # clean column names shown (без ✓), для маппинга клика
+        self._sort_col   = None   # имя колонки сортировки (клик по заголовку)
+        self._sort_asc   = True
         self.current_file = None
         self._auto_stop  = threading.Event()
         self._auto_thread = None
@@ -291,6 +294,7 @@ class App(tk.Tk):
             "right_click_popup_menu",
         )
         self.sheet.bind("<<SheetSelect>>", self._on_cell_select)
+        self.sheet.extra_bindings("column_select", self._on_col_header)
         self.sheet.pack(fill=tk.BOTH, expand=True)
 
         # formula bar
@@ -316,8 +320,8 @@ class App(tk.Tk):
             var = tk.BooleanVar(value=saved.get(col, True))
             var.trace_add("write", lambda *_, c=col: self._on_col_toggle(c))
             self.col_vars[col] = var
-            fvar = tk.StringVar()
-            fvar.trace_add("write", lambda *_: self._on_search())
+            fvar = tk.StringVar(value=self.settings.get("col_filters", {}).get(col, ""))
+            fvar.trace_add("write", lambda *_: self._on_filter_change())
             self.col_filters[col] = fvar
             row = ttk.Frame(self.col_inner)
             row.pack(fill=tk.X)
@@ -338,6 +342,12 @@ class App(tk.Tk):
     def _save_col_settings(self):
         self.settings["col_visibility"] = {c: v.get() for c, v in self.col_vars.items()}
         save_settings(self.settings)
+
+    def _on_filter_change(self):
+        self.settings["col_filters"] = {
+            c: fv.get() for c, fv in self.col_filters.items() if fv.get().strip()}
+        save_settings(self.settings)
+        self._on_search()
 
     # ── row check-marks (per-file, keyed by full row content) ─────────────────
     def _compute_row_keys(self):
@@ -482,13 +492,21 @@ class App(tk.Tk):
                 mask &= df[col].fillna("").astype(str).str.contains(
                     fq, case=case, na=False, regex=False)
 
-        result = df.loc[mask, cols].head(1000)
+        matched = df.loc[mask, cols]
+        if self._sort_col and self._sort_col in matched.columns:
+            matched = matched.sort_values(
+                self._sort_col, ascending=self._sort_asc, kind="stable", na_position="last",
+                key=lambda s: s.astype(str).str.lower() if s.dtype == object else s)
+        result = matched.head(1000)
         keys = self._keys.loc[result.index].tolist() if self._keys is not None else [""] * len(result)
         checked = self._checked_set()
         self._display_keys = keys
+        self._display_cols = cols
         data = result.fillna("").astype(str).values.tolist()
         rows = [[k in checked, *row] for k, row in zip(keys, data)]
-        self._show_table(["✓", *cols], rows, q, case)
+        headers = ["✓"] + [
+            f"{c} {'▲' if self._sort_asc else '▼'}" if c == self._sort_col else c for c in cols]
+        self._show_table(headers, rows, q, case)
         self.status_var.set(
             f"{int(mask.sum())} совпадений  |  {os.path.basename(self.current_file or '')}")
 
@@ -509,10 +527,30 @@ class App(tk.Tk):
                 pass
         self._highlight_matches(rows, query, case, skip_first=has_check)
 
+    def _on_col_header(self, event=None):
+        # клик по заголовку колонки -> сортировка по ней (toggle asc/desc), на уровне pandas
+        try:
+            sel = self.sheet.get_currently_selected()
+            if not sel or sel.type_ != "columns":
+                return
+            c = sel.column
+            if c is None or c == 0 or c - 1 >= len(self._display_cols):
+                return  # ✓ или вне диапазона
+            col = self._display_cols[c - 1]
+            if self._sort_col == col:
+                self._sort_asc = not self._sort_asc
+            else:
+                self._sort_col, self._sort_asc = col, True
+            self._on_search()
+        except Exception:
+            pass
+
     def _on_cell_select(self, event=None):
         try:
             cell = self.sheet.get_currently_selected()
             if not cell:
+                return
+            if cell.type_ == "columns":   # клик по заголовку — это сортировка, не копирование
                 return
             if cell[1] == 0:   # ✓ column — handled by checkbox, don't copy
                 return
