@@ -493,25 +493,30 @@ class App(tk.Tk):
                     fq, case=case, na=False, regex=False)
 
         matched = df.loc[mask, cols]
-        if self._sort_col and self._sort_col in matched.columns:
+        checked = self._checked_set()
+        if self._sort_col == "✓" and self._keys is not None:
+            is_checked = self._keys.loc[matched.index].isin(checked)
+            matched = matched.loc[
+                is_checked.sort_values(ascending=self._sort_asc, kind="stable").index]
+        elif self._sort_col and self._sort_col in matched.columns:
             matched = matched.sort_values(
                 self._sort_col, ascending=self._sort_asc, kind="stable", na_position="last",
                 key=lambda s: s.astype(str).str.lower() if s.dtype == object else s)
         result = matched.head(1000)
         keys = self._keys.loc[result.index].tolist() if self._keys is not None else [""] * len(result)
-        checked = self._checked_set()
         self._display_keys = keys
         self._display_cols = cols
         data = result.fillna("").astype(str).values.tolist()
         rows = [[k in checked, *row] for k, row in zip(keys, data)]
-        headers = ["✓"] + [
+        check_hdr = f"✓ {'▲' if self._sort_asc else '▼'}" if self._sort_col == "✓" else "✓"
+        headers = [check_hdr] + [
             f"{c} {'▲' if self._sort_asc else '▼'}" if c == self._sort_col else c for c in cols]
         self._show_table(headers, rows, q, case)
         self.status_var.set(
             f"{int(mask.sum())} совпадений  |  {os.path.basename(self.current_file or '')}")
 
     def _show_table(self, columns, rows, query="", case=False):
-        has_check = bool(columns) and columns[0] == "✓"
+        has_check = bool(columns) and columns[0].startswith("✓")
         self.sheet.headers(columns)
         self.sheet.set_sheet_data([list(r) for r in rows])
         try:
@@ -534,9 +539,15 @@ class App(tk.Tk):
             if not sel or sel.type_ != "columns":
                 return
             c = sel.column
-            if c is None or c == 0 or c - 1 >= len(self._display_cols):
-                return  # ✓ или вне диапазона
-            col = self._display_cols[c - 1]
+            if c is None:
+                return
+            if c == 0:
+                col = "✓"          # клик по заголовку ✓ -> сортировка по отметкам
+            elif c - 1 < len(self._display_cols):
+                col = self._display_cols[c - 1]
+            else:
+                return  # вне диапазона
+
             if self._sort_col == col:
                 self._sort_asc = not self._sort_asc
             else:
