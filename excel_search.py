@@ -631,6 +631,11 @@ class App(tk.Tk):
                 mask &= df[col].fillna("").astype(str).str.contains(
                     fq, case=case, na=False, regex=False)
         result = df.loc[mask, cols]
+        if self._keys is not None:
+            checked = self._checked_set()
+            marks = self._keys.loc[result.index].isin(checked).map({True: "✓", False: ""})
+            result = result.copy()
+            result.insert(0, "✓", marks.values)
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv"), ("All", "*.*")])
