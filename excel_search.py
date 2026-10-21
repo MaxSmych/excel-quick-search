@@ -354,7 +354,10 @@ class App(tk.Tk):
         # Stable hash of the whole source row (ignoring the synthetic _Лист_ col),
         # so a mark stays on its row regardless of what the row holds (numbers, names…).
         cols = [c for c in self.df.columns if c != "_Лист_"]
-        sub = self.df[cols].fillna("").astype(str)
+        # pandas 3: fillna("") не трогает пустые даты (NaT), astype(str) делает из них NaN-float —
+        # join падал «sequence item 2: expected str instance, float found» (21.10.2026, выгрузка бэдов).
+        # where(notna) обнуляет только пустые ячейки — ключи остальных строк (отметки ✓) прежние.
+        sub = self.df[cols].fillna("").astype(str).where(self.df[cols].notna(), "")
         self._keys = sub.apply(
             lambda r: hashlib.md5("\x1f".join(r.values).encode("utf-8")).hexdigest(),
             axis=1)
@@ -506,7 +509,7 @@ class App(tk.Tk):
         keys = self._keys.loc[result.index].tolist() if self._keys is not None else [""] * len(result)
         self._display_keys = keys
         self._display_cols = cols
-        data = result.fillna("").astype(str).values.tolist()
+        data = result.fillna("").astype(str).where(result.notna(), "").values.tolist()   # пустые даты — не «nan»
         rows = [[k in checked, *row] for k, row in zip(keys, data)]
         check_hdr = f"✓ {'▲' if self._sort_asc else '▼'}" if self._sort_col == "✓" else "✓"
         headers = [check_hdr] + [
