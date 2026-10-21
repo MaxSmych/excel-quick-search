@@ -27,7 +27,7 @@ DEFAULT_EXCEL  = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
 # Версия и обновления (стандарт GUI-программ, brain 04 §10в, с 1.1.0 — 21.10.2026).
 # Репозиторий публичный (MIT) — сборка лежит в его же релизах, токен не нужен.
-VERSION      = "1.1.0"
+VERSION      = "1.1.1"
 APP_NAME     = "Excel Search"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search.zip"      # без пробела: GitHub меняет пробел в имени ассета на точку
@@ -733,18 +733,20 @@ class App(tk.Tk):
 
     def _make_shortcut(self):
         """Один раз — ярлык «Excel Search» с иконкой программы на рабочем столе (только exe)."""
-        if not getattr(sys, "frozen", False):
+        if not getattr(sys, "frozen", False) or self.settings.get("shortcut_done"):
             return
-        lnk = os.path.join(os.path.expanduser("~"), "Desktop", f"{APP_NAME}.lnk")
-        if os.path.exists(lnk):
-            return
+        # рабочий стол — по Windows (бывает перенаправлен в OneDrive), не ~\Desktop
         exe = sys.executable
-        ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{0}');"
-              "$s.TargetPath='{1}';$s.WorkingDirectory='{2}';$s.IconLocation='{1},0';$s.Save()"
-              ).format(*(p.replace("'", "''") for p in (lnk, exe, APP_DIR)))
+        ps = ("$l=Join-Path ([Environment]::GetFolderPath('Desktop')) '{0}.lnk';"
+              "if(-not (Test-Path -LiteralPath $l)){{"
+              "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($l);"
+              "$s.TargetPath='{1}';$s.WorkingDirectory='{2}';$s.IconLocation='{1},0';$s.Save()}}"
+              ).format(*(p.replace("'", "''") for p in (APP_NAME, exe, APP_DIR)))
         try:
             subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                              creationflags=0x08000000)
+            self.settings["shortcut_done"] = True
+            save_settings(self.settings)
         except OSError:
             pass
 
