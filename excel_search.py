@@ -25,6 +25,37 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
 DEFAULT_EXCEL  = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
+# Версия и обновления (стандарт GUI-программ, brain 04 §10в, с 1.1.0 — 21.10.2026).
+# Репозиторий публичный (MIT) — сборка лежит в его же релизах, токен не нужен.
+VERSION      = "1.1.0"
+APP_NAME     = "Excel Search"
+UPDATE_REPO  = "MaxSmych/excel-quick-search"
+UPDATE_ASSET = "Excel-Search.zip"      # без пробела: GitHub меняет пробел в имени ассета на точку
+API_LATEST   = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls / .xlsb).
+
+1. «Обзор» — выбрать файл (или из списка недавних в поле «Файл»).
+2. «Лист» / «Вся книга» — искать в одном листе или во всех сразу.
+3. Слева — колонки: галочка показывает колонку, поле справа от неё — фильтр по этой колонке.
+4. «Поиск» — ищет по всем видимым колонкам сразу, совпадения подсвечиваются.
+5. Колонка ✓ — отметить строку «обработано»; отметки запоминаются для каждого файла.
+6. Клик по заголовку — сортировка; клик по ячейке — значение копируется в буфер.
+7. «Авто↺» — сама перечитывает файл, когда он изменился.
+8. «Экспорт» — сохранить найденное в .xlsx или .csv.
+
+Если что-то не так:
+• файл не открывается — закройте его в Excel и нажмите «Загрузить»;
+• обновление программа предлагает сама при запуске, если на GitHub есть новая версия."""
+
+
+def _parse_ver(tag):
+    """'v1.2.3' -> (1, 2, 3): сравнение версий числами, а не строками."""
+    out = []
+    for part in str(tag).lstrip("vV").split(".")[:3]:
+        num = "".join(ch for ch in part if ch.isdigit())
+        out.append(int(num) if num else 0)
+    return tuple(out + [0] * (3 - len(out)))
+
 
 def _resource(name):
     # works both from source and from a PyInstaller onefile bundle
@@ -105,7 +136,13 @@ C = {
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Excel Search — SSC UZ")
+        # заставка со знаком SM — только в собранном exe (при разработке SPLASH=1)
+        self._splash = None
+        if getattr(sys, "frozen", False) or os.environ.get("SPLASH") == "1":
+            import splash
+            self.withdraw()
+            self._splash = splash.Splash(self)
+        self.title(f"Excel Search — SSC UZ  ·  {VERSION}")
         self.geometry("1280x720")
         self.minsize(800, 500)
         try:
@@ -132,6 +169,11 @@ class App(tk.Tk):
         if startup_file and os.path.exists(startup_file):
             self.file_var.set(startup_file)
             self._load_file(startup_file)
+
+        if self._splash is not None:
+            self._splash.play(self.deiconify)
+        self._make_shortcut()
+        self.after(1500, self._check_update)
 
     # ── ttk style ────────────────────────────────────────────────────────────
     def _apply_style(self):
@@ -208,6 +250,7 @@ class App(tk.Tk):
         ttk.Checkbutton(bar, text="Регистр", variable=self.case_var,
                         command=self._on_search).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="✕ Очистить", command=self._clear_search).pack(side=tk.LEFT)
+        ttk.Button(bar, text="?", width=3, command=self._show_help).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(bar, text="Экспорт", command=self._export_csv).pack(side=tk.RIGHT)
 
         # paned window
@@ -295,6 +338,7 @@ class App(tk.Tk):
         )
         self.sheet.bind("<<SheetSelect>>", self._on_cell_select)
         self.sheet.extra_bindings("column_select", self._on_col_header)
+        self.sheet.extra_bindings("column_width_resize", self._on_col_resize)
         self.sheet.pack(fill=tk.BOTH, expand=True)
 
         # formula bar
@@ -523,17 +567,47 @@ class App(tk.Tk):
         self.sheet.headers(columns)
         self.sheet.set_sheet_data([list(r) for r in rows])
         try:
-            self.sheet.set_all_column_widths()
+            self.sheet.set_all_column_widths()      # сначала — под содержимое
         except Exception:
             pass
         if has_check:
             try:
                 self.sheet.checkbox("A", check_function=self._on_check, redraw=False)
                 self.sheet.column_width(column=0, width=34, redraw=False)
-                self.sheet.redraw()
             except Exception:
                 pass
+        # поверх — ширины, заданные руками/двойным кликом (21.10.2026: каждый поиск и сортировка
+        # заново подгоняли все колонки, и ручная ширина тут же пропадала)
+        saved = self._saved_widths()
+        for i, name in enumerate(self._display_cols):
+            w = saved.get(name)
+            if w:
+                try:
+                    self.sheet.column_width(column=i + (1 if has_check else 0), width=int(w), redraw=False)
+                except Exception:
+                    pass
+        self.sheet.redraw()
         self._highlight_matches(rows, query, case, skip_first=has_check)
+
+    # ── ширина колонок: подгон под содержимое + ручная, запоминается по файлу ───
+    def _saved_widths(self):
+        return self.settings.get("col_widths", {}).get(self.current_file or "", {})
+
+    def _on_col_resize(self, event=None):
+        """Перетаскивание границы или двойной клик (подгон) — запомнить ширину ИЗМЕНЁННЫХ колонок
+        по имени колонки, отдельно для каждого файла; остальные подгоняются под содержимое."""
+        try:
+            widths = self.sheet.get_column_widths()
+            changed = dict((event or {}).get("resized", {}).get("columns", {}) or {})
+        except Exception:
+            return
+        off = 1 if len(widths) == len(self._display_cols) + 1 else 0   # колонка ✓ не запоминается
+        store = self.settings.setdefault("col_widths", {}).setdefault(self.current_file or "", {})
+        for idx in (changed or range(len(widths))):
+            i = int(idx) - off
+            if 0 <= i < len(self._display_cols) and int(idx) < len(widths):
+                store[self._display_cols[i]] = int(widths[int(idx)])
+        save_settings(self.settings)
 
     def _on_col_header(self, event=None):
         # клик по заголовку колонки -> сортировка по ней (toggle asc/desc), на уровне pandas
@@ -652,6 +726,107 @@ class App(tk.Tk):
             messagebox.showinfo("Экспорт", f"Сохранено {len(result)} строк\n{path}")
         except Exception as exc:
             messagebox.showerror("Экспорт", f"Ошибка: {exc}")
+
+    # ── справка, ярлык, обновление (стандарт GUI, 21.10.2026) ────────────────
+    def _show_help(self):
+        messagebox.showinfo(f"Excel Search {VERSION}", HELP_TEXT, parent=self)
+
+    def _make_shortcut(self):
+        """Один раз — ярлык «Excel Search» с иконкой программы на рабочем столе (только exe)."""
+        if not getattr(sys, "frozen", False):
+            return
+        lnk = os.path.join(os.path.expanduser("~"), "Desktop", f"{APP_NAME}.lnk")
+        if os.path.exists(lnk):
+            return
+        exe = sys.executable
+        ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{0}');"
+              "$s.TargetPath='{1}';$s.WorkingDirectory='{2}';$s.IconLocation='{1},0';$s.Save()"
+              ).format(*(p.replace("'", "''") for p in (lnk, exe, APP_DIR)))
+        try:
+            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+                             creationflags=0x08000000)
+        except OSError:
+            pass
+
+    def _update_fail_path(self):
+        return os.path.join(APP_DIR, ".excel_search.update-failed.txt")
+
+    def _check_update(self):
+        """Тихо спросить GitHub о новой версии. Нет сети — молчим."""
+        why = self._update_fail_path()
+        if os.path.exists(why):
+            try:
+                msg = open(why, encoding="utf-8").read().strip()
+                os.remove(why)
+                messagebox.showwarning("Обновление", f"Прошлое обновление не встало: {msg}", parent=self)
+            except OSError:
+                pass
+
+        def worker():
+            import urllib.request
+            try:
+                req = urllib.request.Request(API_LATEST, headers={
+                    "Accept": "application/vnd.github+json", "User-Agent": "excel-search"})
+                data = json.load(urllib.request.urlopen(req, timeout=6))
+            except Exception:
+                return
+            tag = str(data.get("tag_name", ""))
+            if _parse_ver(tag) <= _parse_ver(VERSION):
+                return
+            asset = next((a for a in data.get("assets", []) if a.get("name") == UPDATE_ASSET), None)
+            if asset and getattr(sys, "frozen", False):
+                self.after(0, lambda: self._offer_update(tag, asset["browser_download_url"],
+                                                         int(asset.get("size") or 0)))
+        threading.Thread(target=worker, daemon=True, name="UpdateCheck").start()
+
+    def _offer_update(self, tag, url, size):
+        if not messagebox.askyesno("Обновление", f"Доступна версия {tag} (у вас {VERSION}).\n\n"
+                                   "Скачать и обновить сейчас? Программа закроется и откроется заново.",
+                                   parent=self):
+            return
+        threading.Thread(target=self._update_worker, args=(url, size), daemon=True).start()
+
+    def _update_worker(self, url, size):
+        """Сборка onedir (exe + _internal): архив скачивается во временную папку, после выхода
+        программы скрытый PowerShell распаковывает его поверх папки программы и запускает exe.
+        Настройки (excel_search_settings.json) в архиве нет — они не трогаются."""
+        import shutil, tempfile, urllib.request
+        zp = os.path.join(tempfile.gettempdir(), UPDATE_ASSET)
+        try:
+            with urllib.request.urlopen(url, timeout=180) as r, open(zp, "wb") as f:
+                shutil.copyfileobj(r, f)
+            if size and os.path.getsize(zp) != size:
+                raise OSError(f"скачано {os.path.getsize(zp)} байт из {size}")
+        except Exception as exc:
+            self.after(0, lambda: messagebox.showerror("Обновление", f"Не скачалось: {exc}", parent=self))
+            return
+
+        def q(p):
+            return "'" + p.replace("'", "''") + "'"
+        tar = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "tar.exe")
+        script = (
+            "$ErrorActionPreference='SilentlyContinue'\r\n"
+            f"Wait-Process -Id {os.getpid()} -Timeout 60\r\n"
+            "$ok=$false\r\n"
+            "for($i=0;$i -lt 120;$i++){\r\n"
+            f"  & {q(tar)} -x -f {q(zp)} -C {q(APP_DIR)}\r\n"
+            "  if($LASTEXITCODE -eq 0){$ok=$true;break}\r\n"
+            "  Start-Sleep -Milliseconds 500}\r\n"
+            f"if(-not $ok){{Set-Content -LiteralPath {q(self._update_fail_path())} "
+            "-Value 'файлы программы были заняты' -Encoding UTF8}\r\n"
+            f"Remove-Item -LiteralPath {q(zp)}\r\n"
+            f"Start-Process -FilePath {q(sys.executable)}\r\n"
+            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path\r\n")
+        ps1 = os.path.join(tempfile.gettempdir(), "excel_search_update.ps1")
+        with open(ps1, "w", encoding="utf-8-sig") as f:      # BOM: PS 5.1 иначе бьёт кириллицу в пути
+            f.write(script)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("_MEI", "_PYI"))}
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1]
+        try:
+            subprocess.Popen(cmd, creationflags=0x08000000 | 0x01000000, env=env)
+        except OSError:
+            subprocess.Popen(cmd, creationflags=0x08000000, env=env)
+        self.after(300, self.destroy)
 
     # ── close ─────────────────────────────────────────────────────────────────
     def destroy(self):

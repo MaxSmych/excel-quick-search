@@ -9,11 +9,14 @@ set "B=%TEMP%\excel_search_build"
 if exist "%B%" rmdir /s /q "%B%"
 mkdir "%B%"
 copy /Y "%SRC%excel_search.py" "%B%\" >nul
+copy /Y "%SRC%splash.py"       "%B%\" >nul
 copy /Y "%SRC%icon.ico"        "%B%\" >nul
+xcopy /E /I /Q /Y "%SRC%assets" "%B%\assets" >nul
 
 pushd "%B%"
 python -m PyInstaller --noconfirm --clean --onedir --windowed ^
-    --name "Excel Search" --icon icon.ico --add-data "icon.ico;." excel_search.py
+    --name "Excel Search" --icon icon.ico --add-data "icon.ico;." ^
+    --add-data "assets/splash;assets/splash" excel_search.py
 popd
 
 rem Pack the CONTENTS of the app folder (exe + _internal) so they extract straight
