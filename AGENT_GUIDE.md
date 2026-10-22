@@ -147,8 +147,9 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 
 ## Перенос
 Канал один — **git**: `github.com/MaxSmych/excel-quick-search`. Правка → коммит → push,
-на другой машине → `git pull`. Рабочая копия с 31.08.2026 живёт на локальном диске
-(`C:\Users\max_k\Desktop\ASC\Запчасти\MultiLauncher\Быстрый поиск в Excel`).
+на другой машине → `git pull`. Рабочая копия с 31.08.2026 живёт на локальном диске, с 22.10.2026 —
+`C:\Users\max_k\Desktop\Быстрый поиск в Excel` (старый путь `ASC\Запчасти\MultiLauncher\Быстрый поиск в Excel`
+оставлен junction-ссылкой; на него смотрит `deploy.bat`).
 
 Раньше проект физически жил ТОЛЬКО в зеркале `Z:\Maksim\Перенос\Запчасти\...` — папка
 удалена 31.08.2026 вместе с `update_scripts.bat` (архив:
