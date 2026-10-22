@@ -17,7 +17,7 @@ import zipfile
 
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QRadioButton,
                                QScrollArea, QSplitter, QTableView, QVBoxLayout, QWidget,
@@ -36,6 +36,7 @@ UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
 API_RELEASES = f"https://api.github.com/repos/{UPDATE_REPO}/releases?per_page=20"
 EDITABLE_EXT = (".xlsx", ".xlsm")
+MARK_RGB = (198, 239, 206)            # заливка отмеченной ✓ строки в файле (светло-зелёная)
 CHECK = "✓"
 SHEET_COL = "_Лист_"
 ROW_COL = "_строка_"                   # служебная: номер строки в своём листе (для записи в Excel)
@@ -49,13 +50,14 @@ HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls /
 5. Колонка ✓ — отметить строку «обработано»; отметки запоминаются для каждого файла.
 6. Клик по заголовку — сортировка; клик по ячейке — значение копируется в буфер.
 7. Ширина колонки: тянуть границу заголовка или двойной клик по ней (подгон) — запоминается.
-8. Правка: двойной клик по ячейке или F2, Enter — значение записывается в ту же ячейку файла
-   (.xlsx/.xlsm). Перед первой правкой файла копия кладётся в папку программы _backup.
+8. Правка: двойной клик по ячейке или F2, Enter — значение записывается в ту же ячейку файла.
+   Есть Excel — запись идёт через него (файл открыт у вас — правка видна прямо в окне Excel).
+   ✓ заливает строку в самом файле зелёным — отметки видны всем, кому отправите файл.
+   Перед первой правкой файла копия кладётся в папку программы _backup.
 9. «Авто↺» — сама перечитывает файл, когда он изменился. «Экспорт» — найденное в .xlsx/.csv.
 
 Если что-то не так:
-• правка не записалась — файл открыт в Excel: закройте его и повторите;
-• .xls/.xlsb и файлы с диаграммами/сводными — только просмотр (запись их бы испортила);
+• без Excel на машине: .xls/.xlsb и файлы с диаграммами/сводными — только просмотр;
 • обновление программа предлагает сама при запуске."""
 
 C = {"base": "#1e1e2e", "mantle": "#181825", "surface0": "#313244", "surface1": "#45475a",
@@ -163,6 +165,8 @@ class Model(QAbstractTableModel):
             hit = (self.query in v) if self.case else (self.query.lower() in v.lower())
             if hit:
                 return QColor(C["yellow"]) if role == Qt.BackgroundRole else QColor(C["base"])
+        if role == Qt.BackgroundRole and self.app.keys.at[self.idx[r]] in self.app.checked:
+            return QColor(*MARK_RGB, 70)     # отмеченная строка — тот же зелёный, что заливка в файле
         return None
 
     def flags(self, index):
@@ -176,8 +180,11 @@ class Model(QAbstractTableModel):
     def setData(self, index, value, role=Qt.EditRole):
         r, c = index.row(), index.column()
         if c == 0 and role == Qt.CheckStateRole:
-            self.app.set_checked(self.app.keys.at[self.idx[r]], Qt.CheckState(value) == Qt.Checked)
-            self.dataChanged.emit(index, index)
+            on = Qt.CheckState(value) == Qt.Checked
+            if self.app.can_edit and not self.app.mark_in_file(self.idx[r], on):
+                return False
+            self.app.set_checked(self.app.keys.at[self.idx[r]], on)
+            self.dataChanged.emit(index, self.index(r, self.columnCount() - 1))
             return True
         if c > 0 and role == Qt.EditRole:
             ok = self.app.write_cell(self.idx[r], self.cols[c - 1], value)
@@ -185,6 +192,59 @@ class Model(QAbstractTableModel):
                 self.dataChanged.emit(index, self.index(r, self.columnCount() - 1))
             return ok
         return False
+
+
+def excel_installed():
+    """Есть ли Excel (COM Excel.Application) и xlwings — тогда пишем через Excel: он сохраняет в файле всё."""
+    try:
+        import winreg
+        import xlwings  # noqa: F401
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Excel.Application\CurVer"))
+        return True
+    except Exception:
+        return False
+
+
+class Excel:
+    """Запись через Excel (xlwings). Книга уже открыта у пользователя — правим прямо в его окне
+    (видно сразу, файл не заблокирован). Иначе — свой скрытый Excel; он живёт, пока идут правки,
+    и закрывается через минуту простоя (close_own), чтобы не держать файл."""
+
+    def __init__(self):
+        self.app = None
+        self.own = {}
+
+    def book(self, path):
+        import xlwings as xw
+        full = os.path.normcase(os.path.abspath(path))
+        if full in self.own:
+            return self.own[full]
+        for app in xw.apps:
+            if self.app is not None and app.pid == self.app.pid:
+                continue
+            for b in app.books:
+                if os.path.normcase(b.fullname) == full:
+                    return b
+        if self.app is None:
+            self.app = xw.App(visible=False, add_book=False)
+            self.app.display_alerts = False
+        b = self.app.books.open(path, update_links=False)
+        self.own[full] = b
+        return b
+
+    def close_own(self):
+        for b in self.own.values():
+            try:
+                b.close()
+            except Exception:
+                pass
+        self.own = {}
+        if self.app is not None:
+            try:
+                self.app.quit()
+            except Exception:
+                pass
+            self.app = None
 
 
 class Bus(QObject):
@@ -267,6 +327,11 @@ class App(QMainWindow):
         self.last_mtime = None
         self.can_edit = False
         self.backed_up = set()
+        self.use_excel = excel_installed()
+        self.excel = Excel()
+        self.excel_idle = QTimer(self)
+        self.excel_idle.setSingleShot(True)
+        self.excel_idle.timeout.connect(self.excel.close_own)
         self._applying_widths = False
         self.col_checks, self.col_filters = {}, {}
         self.bus = Bus()
@@ -435,6 +500,7 @@ class App(QMainWindow):
     def load_file(self, path):
         self.status.setText("Загрузка…")
         QApplication.processEvents()
+        xl = None
         try:
             xl = self._xl(path)
             cur = self.sheet_cb.currentText()
@@ -452,8 +518,12 @@ class App(QMainWindow):
             self.load_sheet(xl)
         except Exception as exc:
             self.status.setText(f"Ошибка: {exc}")
+        finally:
+            if xl is not None:
+                xl.close()       # иначе файл занят нами и Excel не может его сохранить (22.10.2026)
 
     def load_sheet(self, xl=None):
+        own = xl is None
         try:
             xl = xl or self._xl(self.current_file)
             if self.rb_all.isChecked():
@@ -479,10 +549,16 @@ class App(QMainWindow):
                                 f"{os.path.basename(self.current_file)}" + ("" if self.can_edit else f"  ·  {why}"))
         except Exception as exc:
             self.status.setText(f"Ошибка: {exc}")
+        finally:
+            if own and xl is not None:
+                xl.close()
 
     def _editable(self):
-        """Правка — только .xlsx/.xlsm без диаграмм/сводных/картинок: openpyxl их при сохранении теряет."""
+        """Через Excel — любой файл (Excel сохраняет всё). Без Excel (openpyxl) — только .xlsx/.xlsm без
+        диаграмм/сводных/картинок: openpyxl их при сохранении теряет."""
         f = self.current_file or ""
+        if self.use_excel:
+            return True, ""
         if not f.lower().endswith(EDITABLE_EXT):
             return False, "только просмотр (.xls/.xlsb)"
         try:
@@ -510,11 +586,13 @@ class App(QMainWindow):
             cb.setChecked(vis.get(col, True))
             cb.toggled.connect(self._on_col_toggle)
             fe = QLineEdit(flt.get(col, ""))
-            fe.setFixedWidth(60)
             fe.setStyleSheet("font-size: 8pt; padding: 1px;")
+            # гибко, но не шире 15 знаков SN (как в 1.1.2)
+            fe.setMinimumWidth(40)
+            fe.setMaximumWidth(QFontMetrics(QFont("Segoe UI", 8)).horizontalAdvance("W" * 15) + 8)
             fe.textChanged.connect(self._on_filter_change)
-            hl.addWidget(cb, 1)
-            hl.addWidget(fe)
+            hl.addWidget(cb)
+            hl.addWidget(fe, 1)
             self.col_lay.insertWidget(self.col_lay.count() - 1, row)
             self.col_checks[col], self.col_filters[col] = cb, fe
 
@@ -639,14 +717,10 @@ class App(QMainWindow):
         xrow, xcol = int(self.df.at[i, ROW_COL]), cols.index(col) + 1
         path = self.current_file
         try:
-            if os.path.getmtime(path) != self.last_mtime:
-                raise RuntimeError("файл изменился после загрузки — нажмите «Обновить» и повторите")
-            if path not in self.backed_up:
-                bdir = os.path.join(APP_DIR, "_backup")
-                os.makedirs(bdir, exist_ok=True)
-                base, ext = os.path.splitext(os.path.basename(path))
-                shutil.copy2(path, os.path.join(bdir, f"{base}_{time.strftime('%Y%m%d_%H%M%S')}{ext}"))
-                self.backed_up.add(path)
+            self._before_write(path)
+            if self.use_excel:
+                self._excel_write(path, sheet, xrow, xcol, col, old_txt, new)
+                raise _Done
             wb = openpyxl.load_workbook(path, keep_vba=path.lower().endswith(".xlsm"))
             ws = wb[sheet]
             head = str(ws.cell(1, xcol).value or "").strip()
@@ -661,6 +735,8 @@ class App(QMainWindow):
                                        "нажмите «Обновить»")
             cell.value = _typed(new, cur)
             wb.save(path)
+        except _Done:
+            pass
         except PermissionError:
             QMessageBox.warning(self, "Правка", "Файл открыт в Excel — закройте его и повторите правку.")
             return False
@@ -679,6 +755,74 @@ class App(QMainWindow):
             self.keys.at[i] = nk
         self.last_mtime = os.path.getmtime(path)
         self.status.setText(f"Записано в файл: {col} = {new[:60]}  (строка {xrow})")
+        return True
+
+    def _before_write(self, path):
+        if os.path.getmtime(path) != self.last_mtime:
+            raise RuntimeError("файл изменился после загрузки — нажмите «Обновить» и повторите")
+        if path not in self.backed_up:
+            bdir = os.path.join(APP_DIR, "_backup")
+            os.makedirs(bdir, exist_ok=True)
+            base, ext = os.path.splitext(os.path.basename(path))
+            shutil.copy2(path, os.path.join(bdir, f"{base}_{time.strftime('%Y%m%d_%H%M%S')}{ext}"))
+            self.backed_up.add(path)
+
+    def _excel_sheet(self, path, sheet):
+        self.status.setText("Excel: открываю файл…")
+        QApplication.processEvents()
+        b = self.excel.book(path)
+        return b, b.sheets[sheet]
+
+    def _excel_saved(self, b):
+        b.save()
+        self.last_mtime = os.path.getmtime(self.current_file)
+        self.excel_idle.start(60_000)
+
+    def _excel_write(self, path, sheet, xrow, xcol, col, old_txt, new):
+        b, ws = self._excel_sheet(path, sheet)
+        head = str(ws.range(1, xcol).value or "").strip()
+        if head != str(col).split(".")[0].strip() and head != str(col).strip():
+            raise RuntimeError(f"в файле колонка {xcol} называется «{head}», а не «{col}»")
+        rng = ws.range(xrow, xcol)
+        cur = rng.value
+        cur_txt = "" if cur is None else str(cur)
+        if cur_txt != old_txt and not (isinstance(cur, (int, float)) and old_txt and _same_num(cur, old_txt)):
+            if not (hasattr(cur, "isoformat") and old_txt.startswith(str(cur)[:10])):
+                raise RuntimeError(f"в файле в этой ячейке «{cur_txt}», а в таблице «{old_txt}» — "
+                                   "нажмите «Обновить»")
+        rng.value = _typed(new, cur)
+        self._excel_saved(b)
+
+    def mark_in_file(self, i, on):
+        """✓ → залить строку в файле (MARK_RGB), снять ✓ → убрать заливку. Через Excel — любой файл,
+        без Excel — openpyxl (только .xlsx/.xlsm)."""
+        sheet = self.df.at[i, SHEET_COL] if SHEET_COL in self.df.columns else self.sheet_cb.currentText()
+        xrow = int(self.df.at[i, ROW_COL])
+        path = self.current_file
+        try:
+            self._before_write(path)
+            if self.use_excel:
+                b, ws = self._excel_sheet(path, sheet)
+                last = ws.used_range.last_cell.column
+                ws.range((xrow, 1), (xrow, last)).color = MARK_RGB if on else None
+                self._excel_saved(b)
+            else:
+                import openpyxl
+                from openpyxl.styles import PatternFill
+                wb = openpyxl.load_workbook(path, keep_vba=path.lower().endswith(".xlsm"))
+                ws = wb[sheet]
+                fill = PatternFill("solid", fgColor="%02X%02X%02X" % MARK_RGB) if on else PatternFill()
+                for c in range(1, ws.max_column + 1):
+                    ws.cell(xrow, c).fill = fill
+                wb.save(path)
+                self.last_mtime = os.path.getmtime(path)
+        except PermissionError:
+            QMessageBox.warning(self, "Отметка", "Файл открыт в Excel — закройте его и повторите.")
+            return False
+        except Exception as exc:
+            QMessageBox.warning(self, "Отметка", f"Не записал в файл: {exc}")
+            return False
+        self.status.setText(f"{'Отмечено' if on else 'Снята отметка'} в файле: строка {xrow}")
         return True
 
     # ── авто-перезагрузка ──
@@ -812,8 +956,13 @@ class App(QMainWindow):
         QTimer.singleShot(0, QApplication.instance().quit)
 
     def closeEvent(self, ev):
+        self.excel.close_own()
         save_settings(self.settings)
         super().closeEvent(ev)
+
+
+class _Done(Exception):
+    """Запись прошла через Excel — ветку openpyxl пропустить."""
 
 
 def _same_num(cur, txt):
