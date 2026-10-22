@@ -107,6 +107,24 @@ Standalone desktop-утилита live-поиска по любому Excel-фа
 - **Выпуск:** поднять `VERSION` → `build.bat` → `gh release create v<версия> "Excel-Search.zip" --repo
   MaxSmych/excel-quick-search` (архив переименовать без пробела).
 
+## Excel Search 2 (Qt) — 2.0.0 (22.10.2026), пре-релиз рядом с 1.x
+- Исходник `excel_search_qt.py`, сборка `build_qt.bat` → `Excel-Search-Qt.zip` (onedir, ~96 МБ), релиз
+  `v2.0.0` помечен **pre-release**: 1.x берёт «latest» и ассет `Excel-Search.zip`, на Qt не переедет.
+  Qt-линия обновляется по своему ассету (`API_RELEASES`, пре-релизы тоже). Выпуск: `VERSION` → `build_qt.bat` →
+  `gh release create v<версия> Excel-Search-Qt.zip --prerelease`.
+- **Правка и отметки — в самом файле.** Есть Excel (COM `Excel.Application` + xlwings) → запись через Excel
+  (`class Excel`): книга открыта у пользователя — пишем в его окно; нет — свой скрытый Excel, закрывается через
+  60 с простоя (`excel_idle`) и при выходе. Excel сохраняет всё (диаграммы, сводные, макросы, .xls/.xlsb).
+  Нет Excel → прежняя ветка openpyxl (только .xlsx/.xlsm без диаграмм). ✓ = заливка строки `MARK_RGB`
+  (198,239,206) в файле (`mark_in_file`), снятие — заливка `None`; в таблице строка подсвечена тем же зелёным.
+  Перед первой записью — копия в `_backup\`; перед записью сверяются mtime, заголовок колонки и старое значение.
+- **Грабля:** `pd.ExcelFile` держал файл открытым → `Book.Save()` скрытого Excel висел на невидимом диалоге.
+  Теперь `ExcelFile` закрывается после чтения (`load_file`/`load_sheet`, `finally: xl.close()`).
+- Проверено 22.10.2026 на 239 (32-бит Office 2016): правка + ✓ в скрытом Excel и в книге, открытой в «чужом»
+  Excel (правка видна в его окне), файл с диаграммой в exe открыт на правку (xlwings в сборке работает).
+- У пользователя (DESKTOP-SN0N1VG): `MultiLauncher\Быстрый поиск в Excel (Qt)\Excel Search 2.exe`, ярлык
+  «Excel Search 2» на рабочем столе, настройки скопированы из 1.x. На 239 Excel — в `Program Files (x86)`.
+
 ## Константы / ориентиры
 - `APP_DIR` — база для постоянных файлов: рядом с **exe** при `sys.frozen`, иначе рядом со
   скриптом. **НЕ** `sys._MEIPASS` (это временная папка распаковки onefile, своя на каждый
