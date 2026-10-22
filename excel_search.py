@@ -27,7 +27,7 @@ DEFAULT_EXCEL  = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
 # Версия и обновления (стандарт GUI-программ, brain 04 §10в, с 1.1.0 — 21.10.2026).
 # Репозиторий публичный (MIT) — сборка лежит в его же релизах, токен не нужен.
-VERSION      = "1.1.1"
+VERSION      = "1.1.2"
 APP_NAME     = "Excel Search"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search.zip"      # без пробела: GitHub меняет пробел в имени ассета на точку
@@ -370,7 +370,7 @@ class App(tk.Tk):
             row = ttk.Frame(self.col_inner)
             row.pack(fill=tk.X)
             ttk.Checkbutton(row, text=col, variable=var).pack(side=tk.LEFT)
-            ttk.Entry(row, textvariable=fvar, width=7,
+            ttk.Entry(row, textvariable=fvar, width=17,  # 15 знаков SN заглавными
                       font=("Segoe UI", 8)).pack(side=tk.RIGHT, padx=(2, 0))
 
     def _on_col_toggle(self, _col):
