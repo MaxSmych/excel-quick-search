@@ -30,7 +30,7 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
 DEFAULT_EXCEL = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
-VERSION      = "2.0.1"
+VERSION      = "2.0.2"
 APP_NAME     = "Excel Search 2"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
@@ -454,7 +454,9 @@ class App(QMainWindow):
         self._build_ui()
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self._auto_tick)
-        start = self.settings.get("last_file") or DEFAULT_EXCEL
+        # файл в командной строке («Открыть склад SN» из GASP Scrap, 23.10.2026) главнее последнего
+        arg = next((a for a in sys.argv[1:] if os.path.isfile(a)), None)
+        start = arg or self.settings.get("last_file") or DEFAULT_EXCEL
         if start and os.path.exists(start):
             self.file_cb.setEditText(start)
             self.load_file(start)
