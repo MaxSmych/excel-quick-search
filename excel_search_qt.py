@@ -19,7 +19,7 @@ import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QRadioButton,
+                               QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
                                QScrollArea, QSizePolicy, QSplitter, QTableView, QVBoxLayout, QWidget,
                                QAbstractItemView, QStyle, QStyledItemDelegate, QStyleOptionViewItem)
 
@@ -45,11 +45,12 @@ ROW_COL = "_строка_"                   # служебная: номер с
 
 HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls / .xlsb).
 
-1. «Обзор» — выбрать файл (или из списка недавних в поле «Файл»).
-2. «Лист» / «Вся книга» — искать в одном листе или во всех сразу.
+1. «Обзор» — выбрать файл; или выбрать из списка недавних в поле пути; или вставить путь и Enter.
+2. Список листов — один лист или «Вся книга» (поиск по всем листам сразу).
 3. Слева — колонки: галочка показывает колонку, поле справа от неё — фильтр по этой колонке.
    Галочка «Колонки» — показать все / скрыть все.
-4. «Поиск» — ищет по всем видимым колонкам сразу, совпадения подсвечиваются.
+4. Поиск — ищет по всем видимым колонкам сразу (заглавные и строчные не различает),
+   совпадения подсвечиваются. Крестик справа от поля — очистить.
 5. Колонка ✓ — отметка для себя; запоминается для каждого файла, в файл не пишется.
 6. Клик по заголовку — сортировка; клик по ячейке — значение копируется в буфер.
 7. Ширина колонки: тянуть границу заголовка или двойной клик по ней (подгон) — запоминается.
@@ -58,34 +59,32 @@ HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls /
    Цвет: выделите ячейки (мышью, Shift/Ctrl) и нажмите квадратик справа от поиска — ячейки
    зальются и в программе, и в самом файле (видно всем, кому отправите файл). Ещё раз тот же
    цвет — заливка снимается. Заливка, сделанная в самом Excel, тоже видна (.xlsx/.xlsm).
-   Выделенные ячейки обведены оранжевой рамкой, строка и колонка текущей ячейки подсвечены.
+   Выделенные ячейки обведены синей рамкой, строка и колонка текущей ячейки подсвечены.
    ✓ — просто отметка для себя, в файл не пишется.
    Перед первой правкой файла копия кладётся в папку программы _backup.
-9. «Авто↺» — сама перечитывает файл, когда он изменился. Кнопка языка — RU → EN → 中文.
+9. Значок ↻ — перечитать файл. Галочка рядом с ним — авто: программа сама перечитывает файл,
+   когда он изменился. Язык — список RU / EN / 中文 справа вверху.
 
 Если что-то не так:
 • без Excel на машине: .xls/.xlsb и файлы с диаграммами/сводными — только просмотр;
 • обновление программа предлагает сама при запуске."""
 
-# ── языки (2.0.2, 23.10.2026): RU → EN → 中文 по кругу; нет перевода — показываем оригинал ──
+# ── языки (2.0.2, 23.10.2026): RU / EN / 中文 — выпадающий список (2.0.4); нет перевода — показываем оригинал ──
 LANGS = ("ru", "en", "zh")
-LANG_NEXT = {"ru": "en", "en": "zh", "zh": "ru"}
-LANG_BTN = {"ru": "EN", "en": "中文", "zh": "RU"}       # на кнопке — язык, на который переключишь
+LANG_NAMES = ("RU", "EN", "中文")
 LANG = "ru"
 
 TR = {  # русский → (английский, китайский)
-    "Файл:": ("File:", "文件:"),
     "Обзор": ("Browse", "浏览"),
-    "Загрузить": ("Load", "加载"),
-    "↺ Обновить": ("↺ Reload", "↺ 刷新"),
-    "Лист": ("Sheet", "工作表"),
+    "Файл Excel…": ("Excel file…", "Excel 文件…"),
+    "Перечитать файл": ("Reload the file", "重新读取文件"),
+    "Авто: перечитывать файл, когда он изменился": ("Auto: reload the file when it changes", "自动：文件变化时重新读取"),
+    "Лист или вся книга": ("Sheet or whole workbook", "工作表或整个工作簿"),
     "Вся книга": ("Whole workbook", "整个工作簿"),
-    "Лист:": ("Sheet:", "工作表:"),
-    "Авто↺": ("Auto↺", "自动↺"),
     "Файл не загружен": ("No file loaded", "未加载文件"),
-    "Поиск:": ("Search:", "搜索:"),
-    "Регистр": ("Match case", "区分大小写"),
-    "✕ Очистить": ("✕ Clear", "✕ 清除"),
+    "Поиск…": ("Search…", "搜索…"),
+    "Очистить поиск": ("Clear search", "清空搜索"),
+    "Справка": ("Help", "帮助"),
     "Колонки": ("Columns", "列"),
     "Показать все колонки / скрыть все": ("Show all columns / hide all", "显示全部列 / 全部隐藏"),
     "Все": ("All", "全部"),
@@ -114,11 +113,11 @@ TR = {  # русский → (английский, китайский)
     " (только в программе — файл не правится)": (" (in the program only — file not changed)", "（仅在程序中 — 文件未修改）"),
     "в файле колонка {x} называется «{h}», а не «{c}»":
         ("column {x} in the file is «{h}», not «{c}»", "文件中第 {x} 列为「{h}」，而不是「{c}」"),
-    "в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите «Обновить»":
-        ("the file has «{a}» in this cell, the table has «{b}» — press «Reload»",
-         "文件中该单元格为「{a}」，表格中为「{b}」— 请点击「刷新」"),
-    "файл изменился после загрузки — нажмите «Обновить» и повторите":
-        ("the file changed after loading — press «Reload» and try again", "加载后文件已更改 — 请点击「刷新」后重试"),
+    "в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите ↻ (перечитать файл)":
+        ("the file has «{a}» in this cell, the table has «{b}» — press ↻ (reload the file)",
+         "文件中该单元格为「{a}」，表格中为「{b}」— 请点击 ↻（重新读取文件）"),
+    "файл изменился после загрузки — нажмите ↻ (перечитать файл) и повторите":
+        ("the file changed after loading — press ↻ (reload the file) and try again", "加载后文件已更改 — 请点击 ↻（重新读取文件）后重试"),
     "Правка": ("Edit", "编辑"),
     "Файл открыт в Excel — закройте его и повторите правку.":
         ("The file is open in Excel — close it and repeat the edit.", "文件已在 Excel 中打开 — 请关闭后重新编辑。"),
@@ -131,7 +130,7 @@ TR = {  # русский → (английский, китайский)
         ("Version {tag} is available (you have {v}).\n\nDownload and update now? The program will close and reopen.",
          "有新版本 {tag}（当前 {v}）。\n\n现在下载并更新吗？程序将关闭并重新打开。"),
     "Не скачалось: {exc}": ("Download failed: {exc}", "下载失败: {exc}"),
-    "Язык: RU → EN → 中文": ("Language: RU → EN → 中文", "语言: RU → EN → 中文"),
+    "Язык": ("Language", "语言"),
 }
 
 # Заголовки колонок из выгрузок (собраны с файлов «Запчасти» на 110, 23.10.2026): китайский →
@@ -199,11 +198,12 @@ def col_title(name):
 
 HELP_EN = """Quick search in any Excel file (.xlsx / .xls / .xlsb).
 
-1. «Browse» — pick a file (or one of the recent ones in the «File» box).
-2. «Sheet» / «Whole workbook» — search one sheet or all of them.
+1. «Browse» — pick a file; or a recent one from the path box; or paste a path and press Enter.
+2. Sheet list — one sheet or «Whole workbook» (search all sheets at once).
 3. Left — columns: the tick shows a column, the box next to it filters by that column.
    The «Columns» tick shows all / hides all.
-4. «Search» — searches all visible columns at once, matches are highlighted.
+4. Search — all visible columns at once (case-insensitive), matches are highlighted.
+   The cross next to the box clears it.
 5. Column ✓ — a note for yourself; remembered per file, not written to the file.
 6. Click a header — sort; click a cell — its value is copied.
 7. Column width: drag the header border; double-click it — fit to the widest value.
@@ -212,7 +212,8 @@ HELP_EN = """Quick search in any Excel file (.xlsx / .xls / .xlsb).
    Colour: select cells and press a colour square next to the search — the cells are filled
    in the program and in the file. The same colour again — fill removed.
    Before the first edit a copy of the file goes to the program's _backup folder.
-9. «Auto↺» — reloads the file when it changes. The language button — RU → EN → 中文.
+9. The ↻ icon — reload the file. The tick next to it — auto: reload whenever the file changes.
+   Language — the RU / EN / 中文 list at the top right.
 
 If something is wrong:
 • without Excel: .xls/.xlsb and files with charts/pivots — view only;
@@ -220,10 +221,10 @@ If something is wrong:
 
 HELP_ZH = """快速搜索任意 Excel 文件（.xlsx / .xls / .xlsb）。
 
-1. 「浏览」— 选择文件（或在「文件」框中选最近的文件）。
-2. 「工作表」/「整个工作簿」— 在一个或全部工作表中搜索。
+1. 「浏览」— 选择文件；或在路径框中选最近的文件；或粘贴路径后按回车。
+2. 工作表列表 — 一个工作表或「整个工作簿」（同时搜索全部工作表）。
 3. 左侧为列：勾选显示该列，旁边的框按该列筛选。「列」勾选 — 全部显示 / 全部隐藏。
-4. 「搜索」— 同时搜索所有可见列，匹配项高亮。
+4. 搜索 — 同时搜索所有可见列（不区分大小写），匹配项高亮。框右侧的叉号 — 清空。
 5. ✓ 列 — 自己的标记，按文件记住，不写入文件。
 6. 点击表头 — 排序；点击单元格 — 复制其值。
 7. 列宽：拖动表头边界；双击边界 — 按最宽内容自适应。
@@ -231,24 +232,35 @@ HELP_ZH = """快速搜索任意 Excel 文件（.xlsx / .xls / .xlsb）。
    文件已在 Excel 中打开时可直接看到修改）。
    颜色：选择单元格后点击搜索框右侧的色块 — 程序和文件中都会填充；再点同一颜色 — 取消填充。
    第一次编辑前，文件副本保存在程序的 _backup 文件夹。
-9. 「自动↺」— 文件变化时自动重新加载。语言按钮 — RU → EN → 中文。
+9. ↻ 图标 — 重新读取文件。旁边的勾选 — 自动：文件变化时自动重新读取。语言 — 右上角 RU / EN / 中文 列表。
 
 如有问题：
 • 没有 Excel 时：.xls/.xlsb 及含图表/数据透视表的文件仅可查看；
 • 程序启动时会自动提示更新。"""
 
-C = {"base": "#1e1e2e", "mantle": "#181825", "surface0": "#313244", "surface1": "#45475a",
-     "text": "#cdd6f4", "blue": "#89b4fa", "green": "#a6e3a1", "overlay": "#6c7086",
-     "yellow": "#f9e2af", "red": "#f38ba8"}
+# палитра F (2.0.4, выбрана пользователем 23.10.2026): нейтральный серый, как у Photoshop; цвет — только у
+# главного действия («Обзор»), остальные кнопки серые (Adobe Spectrum: accent одна, остальное нейтральное)
+C = {"base": "#1e1e1e", "mantle": "#191919", "surface0": "#2c2c2c", "surface1": "#3d3d3d",
+     "text": "#e3e3e3", "muted": "#a8a8a8", "head": "#c8c8c8", "blue": "#89b4fa", "green": "#a6e3a1",
+     "overlay": "#6c7086", "yellow": "#f9e2af", "red": "#f38ba8", "accent": "#2f6fdb", "accent_hi": "#3d7ff0"}
+ICON_FONT = "Segoe MDL2 Assets"        # значки Windows 10/11 (Проводник, Параметры): E72C — обновить, E711 — крестик
 
 STYLE = f"""
 QWidget {{ background: {C['base']}; color: {C['text']}; font: 10pt 'Segoe UI'; }}
-QLineEdit, QComboBox {{ background: {C['surface0']}; border: 1px solid {C['surface1']}; padding: 3px; }}
-QPushButton {{ background: {C['surface0']}; border: none; padding: 5px 10px; }}
+QLineEdit, QComboBox {{ background: {C['surface0']}; border: 1px solid {C['surface1']}; border-radius: 4px; padding: 3px; }}
+QComboBox {{ padding: 3px 8px; }}
+QComboBox:hover {{ border-color: #5a5a5a; }}
+QPushButton {{ background: {C['surface0']}; color: {C['text']}; border: none; border-radius: 5px;
+               padding: 5px 12px; min-height: 18px; }}
 QPushButton:hover {{ background: {C['surface1']}; }}
+QPushButton:pressed {{ background: {C['mantle']}; }}
+QPushButton#accent {{ background: {C['accent']}; color: white; font-weight: 600; }}
+QPushButton#accent:hover {{ background: {C['accent_hi']}; }}
+QPushButton#accent:pressed {{ background: {C['accent']}; }}
+QPushButton#icon {{ font-family: '{ICON_FONT}'; padding: 5px 9px; }}
 QTableView {{ background: {C['mantle']}; gridline-color: {C['surface0']}; font: 9pt 'Segoe UI';
               selection-background-color: {C['surface1']}; selection-color: {C['text']}; }}
-QHeaderView::section {{ background: {C['surface0']}; color: {C['blue']}; font: bold 9pt 'Segoe UI';
+QHeaderView::section {{ background: {C['surface0']}; color: {C['head']}; font: bold 9pt 'Segoe UI';
                         border: 1px solid {C['surface1']}; padding: 3px; }}
 QHeaderView::section:checked {{ background: {C['surface1']}; color: #2f80ff; }}
 QScrollBar {{ background: {C['base']}; }}
@@ -646,73 +658,78 @@ class App(QMainWindow):
         self.setCentralWidget(root)
 
         top = QHBoxLayout()
-        top.addWidget(self._t(QLabel(), "Файл:"))
         self.file_cb = QComboBox()
         self.file_cb.setEditable(True)
-        # поле узкое (видно имя файла — конец пути), полный путь — в подсказке и в выпадающем списке
-        self.file_cb.setMinimumWidth(150)
-        self.file_cb.setMaximumWidth(300)
+        self._t(self.file_cb.lineEdit(), "Файл Excel…", "setPlaceholderText")
+        # гибкое: видно имя файла (конец пути); полный путь — в подсказке и в выпадающем списке
+        self.file_cb.setMinimumWidth(220)
+        self.file_cb.setMaximumWidth(480)
         self.file_cb.view().setMinimumWidth(700)
         self.file_cb.editTextChanged.connect(lambda t: (self.file_cb.setToolTip(t),
                                                         self.file_cb.lineEdit().end(False)))
         self.file_cb.addItems(self.settings.get("recent_files", []))
         self.file_cb.setCurrentIndex(-1)
         self.file_cb.activated.connect(lambda _i: self._on_load())
+        # «Загрузить» убрана (2.0.4): «Обзор» и выбор из недавних загружают сразу, вставленный путь — Enter
+        self.file_cb.lineEdit().returnPressed.connect(self._on_load)
         top.addWidget(self.file_cb, 1)
-        for text, fn in (("Обзор", self._browse), ("Загрузить", self._on_load), ("↺ Обновить", self._on_refresh)):
-            b = self._t(QPushButton(), text)
-            b.clicked.connect(fn)
-            top.addWidget(b)
-        self.rb_sheet, self.rb_all = self._t(QRadioButton(), "Лист"), self._t(QRadioButton(), "Вся книга")
-        self.rb_sheet.setChecked(True)
-        self.rb_sheet.toggled.connect(lambda _on: self.current_file and self.load_sheet())
-        top.addWidget(self.rb_sheet)
-        top.addWidget(self.rb_all)
-        top.addWidget(self._t(QLabel(), "Лист:"))
-        self.sheet_cb = QComboBox()
-        self.sheet_cb.setMinimumWidth(150)
-        self.sheet_cb.activated.connect(lambda _i: self.current_file and self.load_sheet())
-        top.addWidget(self.sheet_cb)
-        self.auto_chk = self._t(QCheckBox(), "Авто↺")
+        browse = self._t(QPushButton(), "Обзор")
+        browse.setObjectName("accent")
+        browse.clicked.connect(self._browse)
+        top.addWidget(browse)
+        top.addSpacing(18)
+        # значок и галка без подписей (2.0.4) — в _i18n только подсказки, иначе смена языка вернёт подписи
+        refresh = QPushButton(chr(0xE72C))
+        refresh.setObjectName("icon")
+        self._t(refresh, "Перечитать файл", "setToolTip")
+        refresh.clicked.connect(self._on_refresh)
+        top.addWidget(refresh)
+        self.auto_chk = QCheckBox()
+        self._t(self.auto_chk, "Авто: перечитывать файл, когда он изменился", "setToolTip")
         self.auto_chk.toggled.connect(self._toggle_auto)
         top.addWidget(self.auto_chk)
+        top.addSpacing(18)
+        # лист или вся книга — один выпадающий список: [Вся книга, ―, Лист1, Лист2…]
+        self.sheet_cb = QComboBox()
+        self.sheet_cb.setMinimumWidth(150)
+        self._t(self.sheet_cb, "Лист или вся книга", "setToolTip")
+        self.sheet_cb.activated.connect(lambda _i: self.current_file and self.load_sheet())
+        top.addWidget(self.sheet_cb)
         self.status = QLabel(tr("Файл не загружен"))
         self.status.setStyleSheet(f"color: {C['green']};")
         # длинное сообщение («Записано в файл: …») не расширяет окно — обрезается
         self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         top.addWidget(self.status, 1)
+        # настройки программы — в правом верхнем углу: язык списком, справка
+        self.lang_cb = QComboBox()
+        self.lang_cb.addItems(LANG_NAMES)
+        self.lang_cb.setCurrentIndex(LANGS.index(LANG))
+        self._t(self.lang_cb, "Язык", "setToolTip")
+        self.lang_cb.currentIndexChanged.connect(lambda i: self._set_lang(LANGS[i]))
+        top.addWidget(self.lang_cb)
+        hlp = QPushButton("?")
+        self._t(hlp, "Справка", "setToolTip")
+        hlp.clicked.connect(lambda: QMessageBox.information(
+            self, f"Excel Search {VERSION}", {"ru": HELP_TEXT, "en": HELP_EN, "zh": HELP_ZH}[LANG]))
+        top.addWidget(hlp)
         lay.addLayout(top)
 
+        # вторая строка — работа с данными: поиск (подсказка в поле, крестик рядом) ··· цвета заливки
         bar = QHBoxLayout()
-        lbl = self._t(QLabel(), "Поиск:")
-        lbl.setStyleSheet("font-size: 11pt;")
-        bar.addWidget(lbl)
         self.query = QLineEdit()
-        self.query.setFixedWidth(250)
+        self._t(self.query, "Поиск…", "setPlaceholderText")
+        self.query.setFixedWidth(320)
         self.query.setStyleSheet("font-size: 12pt;")
         self.query.textChanged.connect(self.search)
         bar.addWidget(self.query)
-        self.case_chk = self._t(QCheckBox(), "Регистр")
-        self.case_chk.toggled.connect(self.search)
-        bar.addWidget(self.case_chk)
-        clr = self._t(QPushButton(), "✕ Очистить")
-        clr.clicked.connect(lambda: self.query.setText(""))
+        clr = QPushButton(chr(0xE711))
+        clr.setObjectName("icon")
+        self._t(clr, "Очистить поиск", "setToolTip")
+        clr.clicked.connect(self.query.clear)
         bar.addWidget(clr)
         bar.addStretch(1)
         for name, rgb in MARK_COLORS:
             bar.addWidget(self._swatch(name, rgb))
-        bar.addSpacing(12)
-        # на месте «Экспорт» (правки и цвета теперь в самом файле) — язык: RU → EN → 中文
-        self.lang_btn = QPushButton(LANG_BTN[LANG])
-        self.lang_btn.setFixedWidth(52)
-        self._t(self.lang_btn, "Язык: RU → EN → 中文", "setToolTip")
-        self.lang_btn.clicked.connect(self._switch_lang)
-        bar.addWidget(self.lang_btn)
-        hlp = QPushButton("?")
-        hlp.setFixedWidth(32)
-        hlp.clicked.connect(lambda: QMessageBox.information(
-            self, f"Excel Search {VERSION}", {"ru": HELP_TEXT, "en": HELP_EN, "zh": HELP_ZH}[LANG]))
-        bar.addWidget(hlp)
         lay.addLayout(bar)
 
         self.split = QSplitter(Qt.Horizontal)
@@ -817,11 +834,14 @@ class App(QMainWindow):
         xl = None
         try:
             xl = self._xl(path)
-            cur = self.sheet_cb.currentText()
+            whole, cur = self._whole(), self.sheet_cb.currentText()
             self.sheet_cb.blockSignals(True)
             self.sheet_cb.clear()
+            self.sheet_cb.addItem(tr("Вся книга"))
+            self.sheet_cb.insertSeparator(1)
             self.sheet_cb.addItems(xl.sheet_names)
-            self.sheet_cb.setCurrentText(cur if cur in xl.sheet_names else xl.sheet_names[0])
+            self.sheet_cb.setCurrentIndex(0 if whole else
+                                          2 + (xl.sheet_names.index(cur) if cur in xl.sheet_names else 0))
             self.sheet_cb.blockSignals(False)
             if path != self.current_file:
                 self.backed_up.discard(path)
@@ -836,11 +856,15 @@ class App(QMainWindow):
             if xl is not None:
                 xl.close()       # иначе файл занят нами и Excel не может его сохранить (22.10.2026)
 
+    def _whole(self):
+        """В списке листов выбрана «Вся книга» (пункт 0)."""
+        return self.sheet_cb.currentIndex() == 0 and self.sheet_cb.count() > 0
+
     def load_sheet(self, xl=None):
         own = xl is None
         try:
             xl = xl or self._xl(self.current_file)
-            if self.rb_all.isChecked():
+            if self._whole():
                 frames = []
                 for name in xl.sheet_names:
                     d = xl.parse(name)
@@ -848,11 +872,9 @@ class App(QMainWindow):
                     d[ROW_COL] = range(2, len(d) + 2)
                     frames.append(d)
                 self.df = pd.concat(frames, ignore_index=True)
-                self.sheet_cb.setEnabled(False)
             else:
                 self.df = xl.parse(self.sheet_cb.currentText())
                 self.df[ROW_COL] = range(2, len(self.df) + 2)
-                self.sheet_cb.setEnabled(True)
             self.text = as_text(self.df)
             self.keys = row_keys(self.df)
             self.checked = set(self.settings.get("checked", {}).get(self.current_file, []))
@@ -947,7 +969,7 @@ class App(QMainWindow):
 
     # ── поиск ──
     def _mask(self, cols):
-        q, case, df = self.query.text().strip(), self.case_chk.isChecked(), self.text
+        q, case, df = self.query.text().strip(), False, self.text
         mask = pd.Series(True, index=df.index)
         if q:
             mask &= df[cols].apply(lambda s: s.str.contains(q, case=case, regex=False)).any(axis=1)
@@ -974,7 +996,7 @@ class App(QMainWindow):
             s = self.df.loc[idx, self.sort_col]
             s = s.astype(str).str.lower() if s.dtype == object or str(s.dtype) == "str" else s
             idx = s.sort_values(ascending=self.sort_asc, kind="stable", na_position="last").index
-        self.model.reset(cols, list(idx), self.text, self.query.text().strip(), self.case_chk.isChecked())
+        self.model.reset(cols, list(idx), self.text, self.query.text().strip(), False)
         self._apply_widths()
         # «с данными» — строка, где хоть одна ячейка не пустая (пустые хвосты листа не в счёт)
         has = (self.text.drop(columns=[c for c in (SHEET_COL, ROW_COL) if c in self.text.columns])
@@ -988,9 +1010,9 @@ class App(QMainWindow):
         self._i18n.append((w, method, ru))
         return w
 
-    def _switch_lang(self):
+    def _set_lang(self, code):
         global LANG
-        LANG = LANG_NEXT[LANG]
+        LANG = code
         self.settings["lang"] = LANG
         save_settings(self.settings)
         for w, method, ru in self._i18n:
@@ -998,7 +1020,8 @@ class App(QMainWindow):
                 getattr(w, method)(ru() if callable(ru) else tr(ru))
             except RuntimeError:              # виджет уже удалён (колонки пересобраны)
                 pass
-        self.lang_btn.setText(LANG_BTN[LANG])
+        if self.sheet_cb.count():
+            self.sheet_cb.setItemText(0, tr("Вся книга"))
         for col, cb in self.col_checks.items():
             cb.setText(col_title(col))
         self.model.headerDataChanged.emit(Qt.Horizontal, 0, max(self.model.columnCount() - 1, 0))
@@ -1218,7 +1241,7 @@ class App(QMainWindow):
             cur_txt = "" if cur is None else str(cur)
             if cur_txt != old_txt and not (isinstance(cur, (int, float)) and old_txt and _same_num(cur, old_txt)):
                 if not (hasattr(cur, "isoformat") and old_txt.startswith(str(cur)[:10])):
-                    raise RuntimeError(tr("в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите «Обновить»",
+                    raise RuntimeError(tr("в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите ↻ (перечитать файл)",
                                           a=cur_txt, b=old_txt))
             cell.value = _typed(new, cur)
             wb.save(path)
@@ -1252,7 +1275,7 @@ class App(QMainWindow):
 
     def _before_write(self, path):
         if os.path.getmtime(path) != self.last_mtime:
-            raise RuntimeError(tr("файл изменился после загрузки — нажмите «Обновить» и повторите"))
+            raise RuntimeError(tr("файл изменился после загрузки — нажмите ↻ (перечитать файл) и повторите"))
         if path not in self.backed_up:
             bdir = os.path.join(APP_DIR, "_backup")
             os.makedirs(bdir, exist_ok=True)
@@ -1281,7 +1304,7 @@ class App(QMainWindow):
         cur_txt = "" if cur is None else str(cur)
         if cur_txt != old_txt and not (isinstance(cur, (int, float)) and old_txt and _same_num(cur, old_txt)):
             if not (hasattr(cur, "isoformat") and old_txt.startswith(str(cur)[:10])):
-                raise RuntimeError(tr("в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите «Обновить»",
+                raise RuntimeError(tr("в файле в этой ячейке «{a}», а в таблице «{b}» — нажмите ↻ (перечитать файл)",
                                       a=cur_txt, b=old_txt))
         rng.value = _typed(new, cur)
         self._excel_saved(b)
