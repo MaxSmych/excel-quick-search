@@ -20,7 +20,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal,
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QRadioButton,
-                               QScrollArea, QSplitter, QTableView, QVBoxLayout, QWidget,
+                               QScrollArea, QSizePolicy, QSplitter, QTableView, QVBoxLayout, QWidget,
                                QAbstractItemView, QStyle, QStyledItemDelegate, QStyleOptionViewItem)
 
 if getattr(sys, "frozen", False):
@@ -92,12 +92,10 @@ TR = {  # русский → (английский, китайский)
     "Нет загруженного файла": ("No file loaded", "未加载文件"),
     "Загрузка…": ("Loading…", "加载中…"),
     "Ошибка: {exc}": ("Error: {exc}", "错误: {exc}"),
-    "{n} строк · {c} колонок  |  {f}": ("{n} rows · {c} columns  |  {f}", "{n} 行 · {c} 列  |  {f}"),
     "только просмотр (.xls/.xlsb)": ("view only (.xls/.xlsb)", "仅查看 (.xls/.xlsb)"),
     "только просмотр": ("view only", "仅查看"),
     "только просмотр (в файле диаграммы/сводные/рисунки)":
         ("view only (charts/pivots/pictures in file)", "仅查看（文件含图表/数据透视表/图片）"),
-    "{n} совпадений  |  {f}": ("{n} matches  |  {f}", "{n} 条匹配  |  {f}"),
     "строк {n} / {total}": ("rows {n} / {total}", "行 {n} / {total}"),
     "Скопировано: {t}": ("Copied: {t}", "已复制: {t}"),
     "зелёный": ("green", "绿色"),
@@ -600,7 +598,9 @@ class App(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"Excel Search 2 — SSC UZ  ·  {VERSION}")
         self.resize(1280, 720)
-        self.setMinimumSize(800, 500)
+        # только высота: ширину задаёт раскладка. Явные 800 px перекрывали её минимум (~1200), и Qt
+        # сжимал кнопки меньше их размера — они налезали друг на друга (23.10.2026)
+        self.setMinimumHeight(500)
         if os.path.exists(_resource("icon.ico")):
             self.setWindowIcon(QIcon(_resource("icon.ico")))
         self.settings = load_settings()
@@ -650,14 +650,15 @@ class App(QMainWindow):
         self.file_cb = QComboBox()
         self.file_cb.setEditable(True)
         # поле узкое (видно имя файла — конец пути), полный путь — в подсказке и в выпадающем списке
-        self.file_cb.setFixedWidth(300)
+        self.file_cb.setMinimumWidth(150)
+        self.file_cb.setMaximumWidth(300)
         self.file_cb.view().setMinimumWidth(700)
         self.file_cb.editTextChanged.connect(lambda t: (self.file_cb.setToolTip(t),
                                                         self.file_cb.lineEdit().end(False)))
         self.file_cb.addItems(self.settings.get("recent_files", []))
         self.file_cb.setCurrentIndex(-1)
         self.file_cb.activated.connect(lambda _i: self._on_load())
-        top.addWidget(self.file_cb)
+        top.addWidget(self.file_cb, 1)
         for text, fn in (("Обзор", self._browse), ("Загрузить", self._on_load), ("↺ Обновить", self._on_refresh)):
             b = self._t(QPushButton(), text)
             b.clicked.connect(fn)
@@ -675,10 +676,11 @@ class App(QMainWindow):
         self.auto_chk = self._t(QCheckBox(), "Авто↺")
         self.auto_chk.toggled.connect(self._toggle_auto)
         top.addWidget(self.auto_chk)
-        top.addStretch(1)
         self.status = QLabel(tr("Файл не загружен"))
         self.status.setStyleSheet(f"color: {C['green']};")
-        top.addWidget(self.status)
+        # длинное сообщение («Записано в файл: …») не расширяет окно — обрезается
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        top.addWidget(self.status, 1)
         lay.addLayout(top)
 
         bar = QHBoxLayout()
@@ -860,8 +862,8 @@ class App(QMainWindow):
             self.can_edit, why = self._editable()
             self._rebuild_columns([c for c in self.df.columns if c != ROW_COL])
             self.search()
-            self.status.setText(tr("{n} строк · {c} колонок  |  {f}", n=len(self.df), c=len(self.df.columns) - 1,
-                                   f=os.path.basename(self.current_file)) + ("" if self.can_edit else f"  ·  {why}"))
+            # число строк — в строке fx, имя файла — в поле «Файл»; здесь только «только просмотр»
+            self.status.setText("" if self.can_edit else why)
         except Exception as exc:
             self.status.setText(tr("Ошибка: {exc}", exc=exc))
         finally:
@@ -974,7 +976,6 @@ class App(QMainWindow):
             idx = s.sort_values(ascending=self.sort_asc, kind="stable", na_position="last").index
         self.model.reset(cols, list(idx), self.text, self.query.text().strip(), self.case_chk.isChecked())
         self._apply_widths()
-        self.status.setText(tr("{n} совпадений  |  {f}", n=int(mask.sum()), f=os.path.basename(self.current_file or "")))
         # «с данными» — строка, где хоть одна ячейка не пустая (пустые хвосты листа не в счёт)
         has = (self.text.drop(columns=[c for c in (SHEET_COL, ROW_COL) if c in self.text.columns])
                != "").any(axis=1)
