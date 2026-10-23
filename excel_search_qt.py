@@ -30,7 +30,7 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
 DEFAULT_EXCEL = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
-VERSION      = "2.0.3"
+VERSION      = "2.0.4"
 APP_NAME     = "Excel Search 2"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
