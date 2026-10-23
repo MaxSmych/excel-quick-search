@@ -30,7 +30,7 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
 DEFAULT_EXCEL = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
-VERSION      = "2.0.2"
+VERSION      = "2.0.3"
 APP_NAME     = "Excel Search 2"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
@@ -98,6 +98,7 @@ TR = {  # русский → (английский, китайский)
     "только просмотр (в файле диаграммы/сводные/рисунки)":
         ("view only (charts/pivots/pictures in file)", "仅查看（文件含图表/数据透视表/图片）"),
     "{n} совпадений  |  {f}": ("{n} matches  |  {f}", "{n} 条匹配  |  {f}"),
+    "строк {n} / {total}": ("rows {n} / {total}", "行 {n} / {total}"),
     "Скопировано: {t}": ("Copied: {t}", "已复制: {t}"),
     "зелёный": ("green", "绿色"),
     "жёлтый": ("yellow", "黄色"),
@@ -765,6 +766,10 @@ class App(QMainWindow):
         self.fbar = QLineEdit()
         self.fbar.setReadOnly(True)
         fb.addWidget(self.fbar)
+        # справа — сколько строк показано из скольких с данными (23.10.2026, просьба пользователя)
+        self.rows_lbl = QLabel("")
+        self.rows_lbl.setStyleSheet(f"color: {C['blue']}; padding: 0 6px;")
+        fb.addWidget(self.rows_lbl)
         rl.addLayout(fb)
         self.split.addWidget(right)
         self.split.setSizes([self.settings.get("col_panel_width", 230), 1000])
@@ -954,10 +959,11 @@ class App(QMainWindow):
         if self.df is None:
             return
         cols = [c for c, cb in self.col_checks.items() if cb.isChecked()]
+        mask = self._mask(cols) if cols else None
         if not cols:
             self.model.reset([], [], self.text, "", False)
+            self.rows_lbl.setText(tr("строк {n} / {total}", n=0, total=len(self.df)))
             return
-        mask = self._mask(cols)
         idx = self.df.index[mask]
         if self.sort_col == CHECK:
             chk = self.keys.loc[idx].isin(self.checked)
@@ -969,6 +975,10 @@ class App(QMainWindow):
         self.model.reset(cols, list(idx), self.text, self.query.text().strip(), self.case_chk.isChecked())
         self._apply_widths()
         self.status.setText(tr("{n} совпадений  |  {f}", n=int(mask.sum()), f=os.path.basename(self.current_file or "")))
+        # «с данными» — строка, где хоть одна ячейка не пустая (пустые хвосты листа не в счёт)
+        has = (self.text.drop(columns=[c for c in (SHEET_COL, ROW_COL) if c in self.text.columns])
+               != "").any(axis=1)
+        self.rows_lbl.setText(tr("строк {n} / {total}", n=int(has.loc[list(idx)].sum()), total=int(has.sum())))
 
     # ── язык ──
     def _t(self, w, ru, method="setText"):
