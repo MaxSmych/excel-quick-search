@@ -17,11 +17,11 @@ import zipfile
 
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QRadioButton,
                                QScrollArea, QSplitter, QTableView, QVBoxLayout, QWidget,
-                               QAbstractItemView, QButtonGroup, QColorDialog)
+                               QAbstractItemView, QStyle, QStyledItemDelegate, QStyleOptionViewItem)
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -36,10 +36,9 @@ UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
 API_RELEASES = f"https://api.github.com/repos/{UPDATE_REPO}/releases?per_page=20"
 EDITABLE_EXT = (".xlsx", ".xlsm")
-MARK_RGB = (198, 239, 206)            # заливка отмеченной ✓ строки в файле (светло-зелёная)
-# цвета отметок (как стили Excel «Хороший/Нейтральный/Плохой» + ещё два); «…» — любой свой
-MARK_COLORS = (("зелёный", (198, 239, 206)), ("жёлтый", (255, 235, 156)), ("красный", (255, 199, 206)),
-               ("голубой", (189, 215, 238)), ("оранжевый", (248, 203, 173)))
+# цвета заливки ячеек — насыщенные, как в рабочих таблицах пользователя (23.10.2026)
+MARK_COLORS = (("зелёный", (0, 176, 80)), ("жёлтый", (255, 255, 0)), ("красный", (231, 76, 60)),
+               ("оранжевый", (247, 150, 70)))
 CHECK = "✓"
 SHEET_COL = "_Лист_"
 ROW_COL = "_строка_"                   # служебная: номер строки в своём листе (для записи в Excel)
@@ -49,15 +48,18 @@ HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls /
 1. «Обзор» — выбрать файл (или из списка недавних в поле «Файл»).
 2. «Лист» / «Вся книга» — искать в одном листе или во всех сразу.
 3. Слева — колонки: галочка показывает колонку, поле справа от неё — фильтр по этой колонке.
+   Галочка «Колонки» — показать все / скрыть все.
 4. «Поиск» — ищет по всем видимым колонкам сразу, совпадения подсвечиваются.
 5. Колонка ✓ — отметить строку «обработано»; отметки запоминаются для каждого файла.
 6. Клик по заголовку — сортировка; клик по ячейке — значение копируется в буфер.
 7. Ширина колонки: тянуть границу заголовка или двойной клик по ней (подгон) — запоминается.
 8. Правка: двойной клик по ячейке или F2, Enter — значение записывается в ту же ячейку файла.
    Есть Excel — запись идёт через него (файл открыт у вас — правка видна прямо в окне Excel).
-   ✓ заливает строку в самом файле — отметки видны всем, кому отправите файл. Цвет — квадратики
-   «✓ цвет» рядом с поиском («…» — любой свой). ✓ строки другого цвета перекрашивает её в выбранный,
-   ✓ того же цвета снимает отметку и заливку.
+   Цвет: выделите ячейки (мышью, Shift/Ctrl) и нажмите квадратик справа от поиска — ячейки
+   зальются и в программе, и в самом файле (видно всем, кому отправите файл). Ещё раз тот же
+   цвет — заливка снимается. Заливка, сделанная в самом Excel, тоже видна (.xlsx/.xlsm).
+   Выделенные ячейки обведены оранжевой рамкой, строка и колонка текущей ячейки подсвечены.
+   ✓ — просто отметка для себя, в файл не пишется.
    Перед первой правкой файла копия кладётся в папку программы _backup.
 9. «Авто↺» — сама перечитывает файл, когда он изменился. «Экспорт» — найденное в .xlsx/.csv.
 
@@ -78,6 +80,7 @@ QTableView {{ background: {C['mantle']}; gridline-color: {C['surface0']}; font: 
               selection-background-color: {C['surface1']}; selection-color: {C['text']}; }}
 QHeaderView::section {{ background: {C['surface0']}; color: {C['blue']}; font: bold 9pt 'Segoe UI';
                         border: 1px solid {C['surface1']}; padding: 3px; }}
+QHeaderView::section:checked {{ background: {C['surface1']}; color: #2f80ff; }}
 QScrollBar {{ background: {C['base']}; }}
 QCheckBox, QRadioButton {{ font: 9pt 'Segoe UI'; }}
 """
@@ -170,9 +173,10 @@ class Model(QAbstractTableModel):
             hit = (self.query in v) if self.case else (self.query.lower() in v.lower())
             if hit:
                 return QColor(C["yellow"]) if role == Qt.BackgroundRole else QColor(C["base"])
-        key = self.app.keys.at[self.idx[r]]
-        if role == Qt.BackgroundRole and key in self.app.checked:
-            return QColor(*self.app.row_color(key), 70)   # тот же цвет, что заливка в файле
+        if role in (Qt.BackgroundRole, Qt.ForegroundRole):
+            rgb = self.app.cell_colors.get((self.app.keys.at[self.idx[r]], self.cols[c - 1]))
+            if rgb:                           # залита здесь же — тот же цвет, что в файле
+                return QColor(*rgb) if role == Qt.BackgroundRole else QColor("#1e1e2e")
         return None
 
     def flags(self, index):
@@ -186,14 +190,9 @@ class Model(QAbstractTableModel):
     def setData(self, index, value, role=Qt.EditRole):
         r, c = index.row(), index.column()
         if c == 0 and role == Qt.CheckStateRole:
-            key = self.app.keys.at[self.idx[r]]
-            on = Qt.CheckState(value) == Qt.Checked
-            if not on and key in self.app.checked and self.app.row_color(key) != self.app.mark_rgb:
-                on = True                     # отмечена другим цветом — перекрасить в активный
-            if self.app.can_edit and not self.app.mark_in_file(self.idx[r], on):
-                return False
-            self.app.set_checked(key, on)
-            self.dataChanged.emit(index, self.index(r, self.columnCount() - 1))
+            # ✓ — просто отметка для себя (в настройках программы), в файл не пишется
+            self.app.set_checked(self.app.keys.at[self.idx[r]], Qt.CheckState(value) == Qt.Checked)
+            self.dataChanged.emit(index, index)
             return True
         if c > 0 and role == Qt.EditRole:
             ok = self.app.write_cell(self.idx[r], self.cols[c - 1], value)
@@ -256,10 +255,114 @@ class Excel:
             self.app = None
 
 
+SEL_COLOR = QColor("#2f80ff")            # рамка выделенных ячеек: синий — не совпадает ни с одним цветом заливки
+CROSS = QColor(137, 180, 250, 38)        # «прицел»: строка и колонка текущей ячейки
+
+
+class CellDelegate(QStyledItemDelegate):
+    """Выделение не закрашивает ячейку (её заливку видно), а обводит рамкой; строка и колонка
+    текущей ячейки слегка подсвечены по всей таблице — сразу видно, где ты в массиве."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self.view = view
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        selected = bool(opt.state & QStyle.State_Selected)
+        opt.state &= ~(QStyle.State_Selected | QStyle.State_HasFocus)
+        cur = self.view.currentIndex()
+        style = self.view.style()
+        bg = index.data(Qt.BackgroundRole)
+        if isinstance(bg, QColor) and index.column() > 0:
+            # залитая ячейка: фон и тёмный текст сами — стиль окна красит текст светлым
+            painter.fillRect(opt.rect, bg)
+            painter.save()
+            painter.setPen(QColor(index.data(Qt.ForegroundRole) or "#1e1e2e"))
+            # та же область текста, что у обычной ячейки — иначе подгон ширины не сходится
+            r = style.subElementRect(QStyle.SE_ItemViewItemText, opt, self.view).adjusted(3, 0, 0, 0)
+            painter.drawText(r, int(Qt.AlignVCenter | Qt.AlignLeft),
+                             opt.fontMetrics.elidedText(opt.text, Qt.ElideRight, r.width()))
+            painter.restore()
+        else:
+            style.drawControl(QStyle.CE_ItemViewItem, opt, painter, self.view)
+        if cur.isValid() and (index.row() == cur.row() or index.column() == cur.column()):
+            painter.fillRect(opt.rect, CROSS)
+        if selected:
+            painter.save()
+            painter.setPen(QPen(SEL_COLOR, 3))
+            painter.drawRect(opt.rect.adjusted(2, 2, -2, -2))
+            painter.restore()
+
+
+def theme_colors(wb):
+    """Цвета темы книги в порядке индексов Excel (0 lt1, 1 dk1, 2 lt2, 3 dk2, 4-9 акценты)."""
+    import re
+    xml = wb.loaded_theme.decode("utf-8", "replace") if wb.loaded_theme else ""
+    m = re.search(r"<a:clrScheme.*?</a:clrScheme>", xml, re.S)
+    if not m:
+        return []
+    names = ("dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6")
+    got = {}
+    for n in names:
+        mm = re.search(rf"<a:{n}>.*?(?:srgbClr val|lastClr)=\"([0-9A-Fa-f]{{6}})\"", m.group(0), re.S)
+        got[n] = mm.group(1) if mm else "FFFFFF"
+    order = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6")
+    return [got[n] for n in order]
+
+
+def fill_rgb(color, theme):
+    """openpyxl Color → (r, g, b) или None. rgb, индексная палитра, тема (+ оттенок tint)."""
+    import colorsys
+    from openpyxl.styles.colors import COLOR_INDEX
+    try:
+        if color.type == "rgb" and isinstance(color.rgb, str):
+            h = color.rgb[-6:]
+        elif color.type == "indexed" and color.indexed is not None and color.indexed < len(COLOR_INDEX):
+            h = COLOR_INDEX[color.indexed][-6:]
+        elif color.type == "theme" and color.theme is not None and color.theme < len(theme):
+            h = theme[color.theme]
+        else:
+            return None
+        r, g, b = (int(h[k:k + 2], 16) for k in (0, 2, 4))
+        t = float(color.tint or 0)
+        if t:
+            hh, ll, ss = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+            ll = ll * (1 + t) if t < 0 else ll * (1 - t) + t
+            r, g, b = (round(x * 255) for x in colorsys.hls_to_rgb(hh, ll, ss))
+        return (r, g, b)
+    except Exception:
+        return None
+
+
+def read_fills(path, sheets):
+    """Заливка ячеек из файла (.xlsx/.xlsm): {(лист, строка, колонка): (r, g, b)}; строка 1 — заголовок."""
+    import openpyxl
+    out = {}
+    wb = openpyxl.load_workbook(path, read_only=True)
+    try:
+        theme = theme_colors(wb)
+        for name in sheets:
+            if name not in wb.sheetnames:
+                continue
+            for r, row in enumerate(wb[name].iter_rows(min_row=2), start=2):
+                for c, cell in enumerate(row, start=1):
+                    f = getattr(cell, "fill", None)
+                    if f is not None and f.fill_type == "solid":
+                        rgb = fill_rgb(f.fgColor, theme)
+                        if rgb and rgb != (255, 255, 255):
+                            out[(name, r, c)] = rgb
+    finally:
+        wb.close()
+    return out
+
+
 class Bus(QObject):
     """Сигналы из фоновых потоков в окно (Qt-виджеты трогать только из главного потока)."""
     update_found = Signal(str, str, int)
     message = Signal(str, str)
+    fills_ready = Signal(str, object)     # путь, {(лист, строка Excel, колонка Excel): (r, g, b)}
 
 
 # ── заставка SM (кадры assets/splash, 60 к/с, затем растворение) ──────────────────
@@ -331,8 +434,7 @@ class App(QMainWindow):
         self.text = None
         self.keys = None
         self.checked = set()
-        self.mark_colors = {}                 # ключ строки → (r, g, b) её заливки
-        self.mark_rgb = tuple(self.settings.get("mark_color") or MARK_RGB)
+        self.cell_colors = {}                 # (ключ строки, колонка) → (r, g, b) заливки ячейки
         self.sort_col, self.sort_asc = None, True
         self.current_file = None
         self.last_mtime = None
@@ -348,6 +450,7 @@ class App(QMainWindow):
         self.bus = Bus()
         self.bus.update_found.connect(self._offer_update)
         self.bus.message.connect(lambda t, m: QMessageBox.warning(self, t, m))
+        self.bus.fills_ready.connect(self._on_fills)
         self._build_ui()
         self.auto_timer = QTimer(self)
         self.auto_timer.timeout.connect(self._auto_tick)
@@ -404,7 +507,7 @@ class App(QMainWindow):
         lbl.setStyleSheet("font-size: 11pt;")
         bar.addWidget(lbl)
         self.query = QLineEdit()
-        self.query.setMinimumWidth(380)
+        self.query.setFixedWidth(250)
         self.query.setStyleSheet("font-size: 12pt;")
         self.query.textChanged.connect(self.search)
         bar.addWidget(self.query)
@@ -414,24 +517,10 @@ class App(QMainWindow):
         clr = QPushButton("✕ Очистить")
         clr.clicked.connect(lambda: self.query.setText(""))
         bar.addWidget(clr)
-        bar.addSpacing(16)
-        bar.addWidget(QLabel("✓ цвет:"))
-        self.color_group = QButtonGroup(self)
-        self.color_group.setExclusive(True)
-        for name, rgb in MARK_COLORS:
-            self.color_group.addButton(self._swatch(name, rgb))
-            bar.addWidget(self.color_group.buttons()[-1])
-        self.custom_btn = self._swatch("свой цвет", self.mark_rgb)
-        self.custom_btn.setVisible(self.mark_rgb not in [c for _, c in MARK_COLORS])
-        self.color_group.addButton(self.custom_btn)
-        bar.addWidget(self.custom_btn)
-        more = QPushButton("…")
-        more.setFixedWidth(28)
-        more.setToolTip("Выбрать любой цвет")
-        more.clicked.connect(self._pick_color)
-        bar.addWidget(more)
-        self._sync_swatches()
         bar.addStretch(1)
+        for name, rgb in MARK_COLORS:
+            bar.addWidget(self._swatch(name, rgb))
+        bar.addSpacing(12)
         exp = QPushButton("Экспорт")
         exp.clicked.connect(self.export)
         bar.addWidget(exp)
@@ -446,14 +535,12 @@ class App(QMainWindow):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(4, 4, 4, 4)
         hdr = QHBoxLayout()
-        t = QLabel("Колонки")
-        t.setStyleSheet("font-weight: bold;")
-        hdr.addWidget(t)
+        self.all_chk = QCheckBox("Колонки")      # нажал — все колонки, ещё раз — ни одной
+        self.all_chk.setStyleSheet("font-weight: bold;")
+        self.all_chk.setToolTip("Показать все колонки / скрыть все")
+        self.all_chk.clicked.connect(lambda: self._toggle_all(not self._all_visible()))
+        hdr.addWidget(self.all_chk)
         hdr.addStretch(1)
-        for text, val in (("Ноль", False), ("Все", True)):
-            b = QPushButton(text)
-            b.clicked.connect(lambda _c=False, v=val: self._toggle_all(v))
-            hdr.addWidget(b)
         ll.addLayout(hdr)
         self.col_area = QScrollArea()
         self.col_area.setWidgetResizable(True)
@@ -474,14 +561,20 @@ class App(QMainWindow):
         self.view.verticalHeader().setVisible(False)
         self.view.verticalHeader().setDefaultSectionSize(22)
         self.view.setSelectionBehavior(QAbstractItemView.SelectItems)
+        self.view.setItemDelegate(CellDelegate(self.view))
+        self.view.horizontalHeader().setHighlightSections(True)
         self.view.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
         h = self.view.horizontalHeader()
-        h.setSectionResizeMode(QHeaderView.Interactive)      # двойной клик по границе = подгон (Qt сам)
-        h.setResizeContentsPrecision(500)                     # подгон смотрит до 500 строк — быстро
+        h.setSectionResizeMode(QHeaderView.Interactive)
         h.setSectionsClickable(True)
         h.sectionClicked.connect(self._on_header_click)
         h.sectionResized.connect(self._on_col_resized)
+        # двойной клик по границе — свой подгон (по всем строкам, снимает ручную ширину);
+        # штатный подгон Qt (первые 500 строк) отключаем
+        h.sectionHandleDoubleClicked.disconnect()
+        h.sectionHandleDoubleClicked.connect(self._on_col_fit)
         self.view.clicked.connect(self._on_cell_click)
+        self.view.selectionModel().currentChanged.connect(lambda *_: self.view.viewport().update())
         rl.addWidget(self.view)
         fb = QHBoxLayout()
         fx = QLabel("fx")
@@ -574,8 +667,9 @@ class App(QMainWindow):
             self.text = as_text(self.df)
             self.keys = row_keys(self.df)
             self.checked = set(self.settings.get("checked", {}).get(self.current_file, []))
-            self.mark_colors = {k: tuple(v) for k, v in
-                                self.settings.get("mark_colors", {}).get(self.current_file, {}).items()}
+            self.cell_colors = {tuple(k.split("\x1f", 1)): tuple(v) for k, v in
+                                self.settings.get("cell_colors", {}).get(self.current_file, {}).items()}
+            self._load_fills()
             self.can_edit, why = self._editable()
             self._rebuild_columns([c for c in self.df.columns if c != ROW_COL])
             self.search()
@@ -629,10 +723,20 @@ class App(QMainWindow):
             hl.addWidget(fe, 1)
             self.col_lay.insertWidget(self.col_lay.count() - 1, row)
             self.col_checks[col], self.col_filters[col] = cb, fe
+        self._sync_all_chk()
+
+    def _all_visible(self):
+        return bool(self.col_checks) and all(cb.isChecked() for cb in self.col_checks.values())
+
+    def _sync_all_chk(self):
+        on = [cb.isChecked() for cb in self.col_checks.values()]
+        st = Qt.Checked if on and all(on) else Qt.Unchecked if not any(on) else Qt.PartiallyChecked
+        self.all_chk.setCheckState(st)
 
     def _on_col_toggle(self):
         self.settings["col_visibility"] = {c: cb.isChecked() for c, cb in self.col_checks.items()}
         save_settings(self.settings)
+        self._sync_all_chk()
         self.search()
 
     def _toggle_all(self, val):
@@ -687,23 +791,46 @@ class App(QMainWindow):
     def _saved_widths(self):
         return self.settings.get("col_widths", {}).get(self.current_file or "", {})
 
+    def _fit_width(self, i):
+        """Ширина колонки i по самому широкому значению среди ВСЕХ показанных строк (Qt смотрит
+        только первые 500) и по заголовку. Меряем 30 самых длинных строк — быстро и на 100 тыс."""
+        name = self.model.cols[i - 1]
+        fm = QFontMetrics(QFont("Segoe UI", 9))
+        s = self.text.loc[self.model.idx, name] if len(self.model.idx) else self.text[name].iloc[:0]
+        top = s.loc[s.str.len().nlargest(30).index] if len(s) else []
+        cell = max((fm.horizontalAdvance(v) for v in top), default=0) + 16
+        head = QFontMetrics(QFont("Segoe UI", 9, QFont.Bold)).horizontalAdvance(str(name) + " ▲") + 20
+        return max(cell, head, 40)
+
     def _apply_widths(self):
+        """Открытие: колонка подогнана по содержимому (не шире 500 — длинный текст не растягивает её
+        на весь экран), а потянутая руками — своей запомненной шириной."""
         self._applying_widths = True
         try:
-            self.view.resizeColumnsToContents()
             h = self.view.horizontalHeader()
             h.resizeSection(0, 34)
             saved = self._saved_widths()
             for i, name in enumerate(self.model.cols, start=1):
                 w = saved.get(name)
-                if w:
-                    h.resizeSection(i, int(w))
-                elif h.sectionSize(i) > 500:      # очень длинный текст не растягивает колонку на весь экран
-                    h.resizeSection(i, 500)
+                h.resizeSection(i, int(w) if w else min(self._fit_width(i), 500))
         finally:
             self._applying_widths = False
 
+    def _on_col_fit(self, logical):
+        """Двойной клик по границе: подогнать по самому широкому и снять ручную ширину."""
+        if logical == 0 or logical > len(self.model.cols):
+            return
+        self._applying_widths = True
+        try:
+            self.view.horizontalHeader().resizeSection(logical, self._fit_width(logical))
+        finally:
+            self._applying_widths = False
+        store = self.settings.setdefault("col_widths", {}).setdefault(self.current_file or "", {})
+        if store.pop(self.model.cols[logical - 1], None) is not None:
+            save_settings(self.settings)
+
     def _on_col_resized(self, logical, _old, new):
+        """Ширину потянули руками — запомнить для этого файла."""
         if self._applying_widths or logical == 0 or logical > len(self.model.cols):
             return
         store = self.settings.setdefault("col_widths", {}).setdefault(self.current_file or "", {})
@@ -731,54 +858,112 @@ class App(QMainWindow):
     # ── отметки ✓ ──
     def set_checked(self, key, on):
         (self.checked.add if on else self.checked.discard)(key)
-        if on:
-            self.mark_colors[key] = self.mark_rgb
-        else:
-            self.mark_colors.pop(key, None)
-        f = self.current_file or ""
-        self.settings.setdefault("checked", {})[f] = sorted(self.checked)
-        self.settings.setdefault("mark_colors", {})[f] = {k: list(v) for k, v in self.mark_colors.items()}
+        self.settings.setdefault("checked", {})[self.current_file or ""] = sorted(self.checked)
         save_settings(self.settings)
 
-    def row_color(self, key):
-        return self.mark_colors.get(key, MARK_RGB)
-
-    # ── цвет отметки ──
+    # ── заливка ячеек: выделил → цвет (как в Excel) ──
     def _swatch(self, name, rgb):
         b = QPushButton()
-        b.setCheckable(True)
-        b.setFixedSize(24, 24)
-        b.setToolTip(f"Отмечать ✓ цветом: {name}")
-        b.setProperty("rgb", rgb)
-        self._paint_swatch(b, rgb)
-        b.clicked.connect(lambda _=False, btn=b: self._set_mark_color(tuple(btn.property("rgb"))))
+        b.setFixedSize(34, 24)
+        b.setToolTip(f"Залить выделенные ячейки: {name} (ещё раз — снять заливку)")
+        hexc = "#%02x%02x%02x" % rgb
+        b.setStyleSheet(f"QPushButton {{ background: {hexc}; border: 1px solid {C['surface1']}; "
+                        f"border-radius: 3px; padding: 0; }}")
+        b.clicked.connect(lambda _=False, c=rgb: self.color_cells(c))
         return b
 
-    @staticmethod
-    def _paint_swatch(b, rgb):
-        hexc = "#%02x%02x%02x" % tuple(rgb)
-        b.setStyleSheet(f"QPushButton {{ background: {hexc}; border: 2px solid {C['surface1']}; padding: 0; }}"
-                        f"QPushButton:checked {{ border: 3px solid {C['text']}; }}")
-
-    def _set_mark_color(self, rgb):
-        self.mark_rgb = tuple(rgb)
-        self.settings["mark_color"] = list(self.mark_rgb)
-        save_settings(self.settings)
-        self._sync_swatches()
-
-    def _sync_swatches(self):
-        for b in self.color_group.buttons():
-            b.setChecked(tuple(b.property("rgb")) == self.mark_rgb)
-
-    def _pick_color(self):
-        c = QColorDialog.getColor(QColor(*self.mark_rgb), self, "Цвет отметки ✓")
-        if not c.isValid():
+    def _load_fills(self):
+        """Заливка из самого файла — в фоне, таблица уже показана. .xls/.xlsb — не читается."""
+        path = self.current_file
+        if not path or not path.lower().endswith(EDITABLE_EXT):
             return
-        rgb = (c.red(), c.green(), c.blue())
-        self.custom_btn.setProperty("rgb", rgb)
-        self._paint_swatch(self.custom_btn, rgb)
-        self.custom_btn.setVisible(True)
-        self._set_mark_color(rgb)
+        if SHEET_COL in self.df.columns:
+            sheets = list(dict.fromkeys(self.df[SHEET_COL]))
+        else:
+            sheets = [self.sheet_cb.currentText()]
+
+        def worker():
+            try:
+                fills = read_fills(path, sheets)
+            except Exception:
+                return
+            self.bus.fills_ready.emit(path, fills)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_fills(self, path, fills):
+        if path != self.current_file or self.df is None:
+            return
+        cols = [c for c in self.df.columns if c not in (SHEET_COL, ROW_COL)]
+        sheet_of = (self.df[SHEET_COL] if SHEET_COL in self.df.columns
+                    else pd.Series(self.sheet_cb.currentText(), index=self.df.index))
+        where = {(sheet_of.at[i], int(self.df.at[i, ROW_COL])): i for i in self.df.index}
+        colors = {}
+        for (sheet, r, c), rgb in fills.items():
+            i = where.get((sheet, r))
+            if i is not None and c <= len(cols):
+                colors[(self.keys.at[i], cols[c - 1])] = rgb
+        self.cell_colors = colors          # файл — источник правды о заливке
+        self.model.layoutChanged.emit()
+
+    def _save_cell_colors(self):
+        self.settings.setdefault("cell_colors", {})[self.current_file or ""] = {
+            f"{k}\x1f{c}": list(v) for (k, c), v in self.cell_colors.items()}
+        save_settings(self.settings)
+
+    def _addr(self, i, col):
+        """Лист, строка и колонка ячейки в файле (заголовок — строка 1)."""
+        sheet = self.df.at[i, SHEET_COL] if SHEET_COL in self.df.columns else self.sheet_cb.currentText()
+        cols = [c for c in self.df.columns if c not in (SHEET_COL, ROW_COL)]
+        return sheet, int(self.df.at[i, ROW_COL]), cols.index(col) + 1
+
+    def color_cells(self, rgb):
+        """Залить выделенные ячейки цветом rgb в таблице и в файле. Все уже этого цвета — снять заливку."""
+        cells = [(self.model.idx[ix.row()], self.model.cols[ix.column() - 1])
+                 for ix in self.view.selectionModel().selectedIndexes() if ix.column() > 0]
+        if not cells:
+            self.status.setText("Выделите ячейки, потом нажмите цвет")
+            return
+        keys = [(self.keys.at[i], col) for i, col in cells]
+        new = None if all(self.cell_colors.get(k) == rgb for k in keys) else rgb
+        if self.can_edit:
+            path = self.current_file
+            try:
+                self._before_write(path)
+                by_sheet = {}
+                for i, col in cells:
+                    sheet, xr, xc = self._addr(i, col)
+                    by_sheet.setdefault(sheet, []).append((xr, xc))
+                if self.use_excel:
+                    for sheet, addrs in by_sheet.items():
+                        b, ws = self._excel_sheet(path, sheet)
+                        for xr, xc in addrs:
+                            ws.range(xr, xc).color = new
+                    self._excel_saved(b)
+                else:
+                    import openpyxl
+                    from openpyxl.styles import PatternFill
+                    wb = openpyxl.load_workbook(path, keep_vba=path.lower().endswith(".xlsm"))
+                    fill = PatternFill("solid", fgColor="%02X%02X%02X" % new) if new else PatternFill()
+                    for sheet, addrs in by_sheet.items():
+                        for xr, xc in addrs:
+                            wb[sheet].cell(xr, xc).fill = fill
+                    wb.save(path)
+                    self.last_mtime = os.path.getmtime(path)
+            except PermissionError:
+                QMessageBox.warning(self, "Цвет", "Файл открыт в Excel — закройте его и повторите.")
+                return
+            except Exception as exc:
+                QMessageBox.warning(self, "Цвет", f"Не записал в файл: {exc}")
+                return
+        for k in keys:
+            if new:
+                self.cell_colors[k] = new
+            else:
+                self.cell_colors.pop(k, None)
+        self._save_cell_colors()
+        self.model.layoutChanged.emit()
+        self.status.setText(f"{'Залито' if new else 'Заливка снята'}: {len(cells)} яч."
+                            + ("" if self.can_edit else " (только в программе — файл не правится)"))
 
     # ── правка ячейки → запись в тот же файл ──
     def write_cell(self, i, col, value):
@@ -827,14 +1012,16 @@ class App(QMainWindow):
         self.df.at[i, col] = _typed(new, None) if new else None
         self.text.at[i, col] = new
         nk = row_keys(self.df.loc[[i]]).iloc[0]
+        ok_key = self.keys.at[i]
+        moved = {(nk, c): v for (k, c), v in self.cell_colors.items() if k == ok_key}
+        if moved:
+            self.cell_colors = {kc: v for kc, v in self.cell_colors.items() if kc[0] != ok_key}
+            self.cell_colors.update(moved)
+            self._save_cell_colors()
         if was:
-            old_rgb = self.row_color(self.keys.at[i])
-            self.checked.discard(self.keys.at[i])
-            self.mark_colors.pop(self.keys.at[i], None)
+            self.checked.discard(ok_key)
             self.keys.at[i] = nk
-            keep, self.mark_rgb = self.mark_rgb, old_rgb
             self.set_checked(nk, True)
-            self.mark_rgb = keep
         else:
             self.keys.at[i] = nk
         self.last_mtime = os.path.getmtime(path)
@@ -876,38 +1063,6 @@ class App(QMainWindow):
                                    "нажмите «Обновить»")
         rng.value = _typed(new, cur)
         self._excel_saved(b)
-
-    def mark_in_file(self, i, on):
-        """✓ → залить строку в файле (MARK_RGB), снять ✓ → убрать заливку. Через Excel — любой файл,
-        без Excel — openpyxl (только .xlsx/.xlsm)."""
-        sheet = self.df.at[i, SHEET_COL] if SHEET_COL in self.df.columns else self.sheet_cb.currentText()
-        xrow = int(self.df.at[i, ROW_COL])
-        path = self.current_file
-        try:
-            self._before_write(path)
-            if self.use_excel:
-                b, ws = self._excel_sheet(path, sheet)
-                last = ws.used_range.last_cell.column
-                ws.range((xrow, 1), (xrow, last)).color = self.mark_rgb if on else None
-                self._excel_saved(b)
-            else:
-                import openpyxl
-                from openpyxl.styles import PatternFill
-                wb = openpyxl.load_workbook(path, keep_vba=path.lower().endswith(".xlsm"))
-                ws = wb[sheet]
-                fill = PatternFill("solid", fgColor="%02X%02X%02X" % self.mark_rgb) if on else PatternFill()
-                for c in range(1, ws.max_column + 1):
-                    ws.cell(xrow, c).fill = fill
-                wb.save(path)
-                self.last_mtime = os.path.getmtime(path)
-        except PermissionError:
-            QMessageBox.warning(self, "Отметка", "Файл открыт в Excel — закройте его и повторите.")
-            return False
-        except Exception as exc:
-            QMessageBox.warning(self, "Отметка", f"Не записал в файл: {exc}")
-            return False
-        self.status.setText(f"{'Отмечено' if on else 'Снята отметка'} в файле: строка {xrow}")
-        return True
 
     # ── авто-перезагрузка ──
     def _toggle_auto(self, on):
