@@ -21,7 +21,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, Q
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QRadioButton,
                                QScrollArea, QSplitter, QTableView, QVBoxLayout, QWidget,
-                               QAbstractItemView)
+                               QAbstractItemView, QButtonGroup, QColorDialog)
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -30,13 +30,16 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "excel_search_settings.json")
 DEFAULT_EXCEL = os.path.join(APP_DIR, "维修日报数据.xlsx")
 
-VERSION      = "2.0.0"
+VERSION      = "2.0.1"
 APP_NAME     = "Excel Search 2"
 UPDATE_REPO  = "MaxSmych/excel-quick-search"
 UPDATE_ASSET = "Excel-Search-Qt.zip"   # своё имя: 1.x (tkinter) ищет Excel-Search.zip и на Qt не обновится
 API_RELEASES = f"https://api.github.com/repos/{UPDATE_REPO}/releases?per_page=20"
 EDITABLE_EXT = (".xlsx", ".xlsm")
 MARK_RGB = (198, 239, 206)            # заливка отмеченной ✓ строки в файле (светло-зелёная)
+# цвета отметок (как стили Excel «Хороший/Нейтральный/Плохой» + ещё два); «…» — любой свой
+MARK_COLORS = (("зелёный", (198, 239, 206)), ("жёлтый", (255, 235, 156)), ("красный", (255, 199, 206)),
+               ("голубой", (189, 215, 238)), ("оранжевый", (248, 203, 173)))
 CHECK = "✓"
 SHEET_COL = "_Лист_"
 ROW_COL = "_строка_"                   # служебная: номер строки в своём листе (для записи в Excel)
@@ -52,7 +55,9 @@ HELP_TEXT = """Быстрый поиск по любому Excel (.xlsx / .xls /
 7. Ширина колонки: тянуть границу заголовка или двойной клик по ней (подгон) — запоминается.
 8. Правка: двойной клик по ячейке или F2, Enter — значение записывается в ту же ячейку файла.
    Есть Excel — запись идёт через него (файл открыт у вас — правка видна прямо в окне Excel).
-   ✓ заливает строку в самом файле зелёным — отметки видны всем, кому отправите файл.
+   ✓ заливает строку в самом файле — отметки видны всем, кому отправите файл. Цвет — квадратики
+   «✓ цвет» рядом с поиском («…» — любой свой). ✓ строки другого цвета перекрашивает её в выбранный,
+   ✓ того же цвета снимает отметку и заливку.
    Перед первой правкой файла копия кладётся в папку программы _backup.
 9. «Авто↺» — сама перечитывает файл, когда он изменился. «Экспорт» — найденное в .xlsx/.csv.
 
@@ -165,8 +170,9 @@ class Model(QAbstractTableModel):
             hit = (self.query in v) if self.case else (self.query.lower() in v.lower())
             if hit:
                 return QColor(C["yellow"]) if role == Qt.BackgroundRole else QColor(C["base"])
-        if role == Qt.BackgroundRole and self.app.keys.at[self.idx[r]] in self.app.checked:
-            return QColor(*MARK_RGB, 70)     # отмеченная строка — тот же зелёный, что заливка в файле
+        key = self.app.keys.at[self.idx[r]]
+        if role == Qt.BackgroundRole and key in self.app.checked:
+            return QColor(*self.app.row_color(key), 70)   # тот же цвет, что заливка в файле
         return None
 
     def flags(self, index):
@@ -180,10 +186,13 @@ class Model(QAbstractTableModel):
     def setData(self, index, value, role=Qt.EditRole):
         r, c = index.row(), index.column()
         if c == 0 and role == Qt.CheckStateRole:
+            key = self.app.keys.at[self.idx[r]]
             on = Qt.CheckState(value) == Qt.Checked
+            if not on and key in self.app.checked and self.app.row_color(key) != self.app.mark_rgb:
+                on = True                     # отмечена другим цветом — перекрасить в активный
             if self.app.can_edit and not self.app.mark_in_file(self.idx[r], on):
                 return False
-            self.app.set_checked(self.app.keys.at[self.idx[r]], on)
+            self.app.set_checked(key, on)
             self.dataChanged.emit(index, self.index(r, self.columnCount() - 1))
             return True
         if c > 0 and role == Qt.EditRole:
@@ -322,6 +331,8 @@ class App(QMainWindow):
         self.text = None
         self.keys = None
         self.checked = set()
+        self.mark_colors = {}                 # ключ строки → (r, g, b) её заливки
+        self.mark_rgb = tuple(self.settings.get("mark_color") or MARK_RGB)
         self.sort_col, self.sort_asc = None, True
         self.current_file = None
         self.last_mtime = None
@@ -356,7 +367,11 @@ class App(QMainWindow):
         top.addWidget(QLabel("Файл:"))
         self.file_cb = QComboBox()
         self.file_cb.setEditable(True)
-        self.file_cb.setMinimumWidth(420)
+        # поле узкое (видно имя файла — конец пути), полный путь — в подсказке и в выпадающем списке
+        self.file_cb.setFixedWidth(300)
+        self.file_cb.view().setMinimumWidth(700)
+        self.file_cb.editTextChanged.connect(lambda t: (self.file_cb.setToolTip(t),
+                                                        self.file_cb.lineEdit().end(False)))
         self.file_cb.addItems(self.settings.get("recent_files", []))
         self.file_cb.setCurrentIndex(-1)
         self.file_cb.activated.connect(lambda _i: self._on_load())
@@ -399,6 +414,23 @@ class App(QMainWindow):
         clr = QPushButton("✕ Очистить")
         clr.clicked.connect(lambda: self.query.setText(""))
         bar.addWidget(clr)
+        bar.addSpacing(16)
+        bar.addWidget(QLabel("✓ цвет:"))
+        self.color_group = QButtonGroup(self)
+        self.color_group.setExclusive(True)
+        for name, rgb in MARK_COLORS:
+            self.color_group.addButton(self._swatch(name, rgb))
+            bar.addWidget(self.color_group.buttons()[-1])
+        self.custom_btn = self._swatch("свой цвет", self.mark_rgb)
+        self.custom_btn.setVisible(self.mark_rgb not in [c for _, c in MARK_COLORS])
+        self.color_group.addButton(self.custom_btn)
+        bar.addWidget(self.custom_btn)
+        more = QPushButton("…")
+        more.setFixedWidth(28)
+        more.setToolTip("Выбрать любой цвет")
+        more.clicked.connect(self._pick_color)
+        bar.addWidget(more)
+        self._sync_swatches()
         bar.addStretch(1)
         exp = QPushButton("Экспорт")
         exp.clicked.connect(self.export)
@@ -542,6 +574,8 @@ class App(QMainWindow):
             self.text = as_text(self.df)
             self.keys = row_keys(self.df)
             self.checked = set(self.settings.get("checked", {}).get(self.current_file, []))
+            self.mark_colors = {k: tuple(v) for k, v in
+                                self.settings.get("mark_colors", {}).get(self.current_file, {}).items()}
             self.can_edit, why = self._editable()
             self._rebuild_columns([c for c in self.df.columns if c != ROW_COL])
             self.search()
@@ -697,8 +731,54 @@ class App(QMainWindow):
     # ── отметки ✓ ──
     def set_checked(self, key, on):
         (self.checked.add if on else self.checked.discard)(key)
-        self.settings.setdefault("checked", {})[self.current_file or ""] = sorted(self.checked)
+        if on:
+            self.mark_colors[key] = self.mark_rgb
+        else:
+            self.mark_colors.pop(key, None)
+        f = self.current_file or ""
+        self.settings.setdefault("checked", {})[f] = sorted(self.checked)
+        self.settings.setdefault("mark_colors", {})[f] = {k: list(v) for k, v in self.mark_colors.items()}
         save_settings(self.settings)
+
+    def row_color(self, key):
+        return self.mark_colors.get(key, MARK_RGB)
+
+    # ── цвет отметки ──
+    def _swatch(self, name, rgb):
+        b = QPushButton()
+        b.setCheckable(True)
+        b.setFixedSize(24, 24)
+        b.setToolTip(f"Отмечать ✓ цветом: {name}")
+        b.setProperty("rgb", rgb)
+        self._paint_swatch(b, rgb)
+        b.clicked.connect(lambda _=False, btn=b: self._set_mark_color(tuple(btn.property("rgb"))))
+        return b
+
+    @staticmethod
+    def _paint_swatch(b, rgb):
+        hexc = "#%02x%02x%02x" % tuple(rgb)
+        b.setStyleSheet(f"QPushButton {{ background: {hexc}; border: 2px solid {C['surface1']}; padding: 0; }}"
+                        f"QPushButton:checked {{ border: 3px solid {C['text']}; }}")
+
+    def _set_mark_color(self, rgb):
+        self.mark_rgb = tuple(rgb)
+        self.settings["mark_color"] = list(self.mark_rgb)
+        save_settings(self.settings)
+        self._sync_swatches()
+
+    def _sync_swatches(self):
+        for b in self.color_group.buttons():
+            b.setChecked(tuple(b.property("rgb")) == self.mark_rgb)
+
+    def _pick_color(self):
+        c = QColorDialog.getColor(QColor(*self.mark_rgb), self, "Цвет отметки ✓")
+        if not c.isValid():
+            return
+        rgb = (c.red(), c.green(), c.blue())
+        self.custom_btn.setProperty("rgb", rgb)
+        self._paint_swatch(self.custom_btn, rgb)
+        self.custom_btn.setVisible(True)
+        self._set_mark_color(rgb)
 
     # ── правка ячейки → запись в тот же файл ──
     def write_cell(self, i, col, value):
@@ -748,9 +828,13 @@ class App(QMainWindow):
         self.text.at[i, col] = new
         nk = row_keys(self.df.loc[[i]]).iloc[0]
         if was:
+            old_rgb = self.row_color(self.keys.at[i])
             self.checked.discard(self.keys.at[i])
+            self.mark_colors.pop(self.keys.at[i], None)
             self.keys.at[i] = nk
+            keep, self.mark_rgb = self.mark_rgb, old_rgb
             self.set_checked(nk, True)
+            self.mark_rgb = keep
         else:
             self.keys.at[i] = nk
         self.last_mtime = os.path.getmtime(path)
@@ -804,14 +888,14 @@ class App(QMainWindow):
             if self.use_excel:
                 b, ws = self._excel_sheet(path, sheet)
                 last = ws.used_range.last_cell.column
-                ws.range((xrow, 1), (xrow, last)).color = MARK_RGB if on else None
+                ws.range((xrow, 1), (xrow, last)).color = self.mark_rgb if on else None
                 self._excel_saved(b)
             else:
                 import openpyxl
                 from openpyxl.styles import PatternFill
                 wb = openpyxl.load_workbook(path, keep_vba=path.lower().endswith(".xlsm"))
                 ws = wb[sheet]
-                fill = PatternFill("solid", fgColor="%02X%02X%02X" % MARK_RGB) if on else PatternFill()
+                fill = PatternFill("solid", fgColor="%02X%02X%02X" % self.mark_rgb) if on else PatternFill()
                 for c in range(1, ws.max_column + 1):
                     ws.cell(xrow, c).fill = fill
                 wb.save(path)
